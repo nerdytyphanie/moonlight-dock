@@ -20,16 +20,25 @@ Item {
             "session": session,
             "quitAfter": true
         })
-        stackView.push(segue)
+        stackView.push(segue, dockMode ? StackView.Immediate : StackView.PushTransition)
     }
 
     function onLaunchFailed(message) {
+        if (dockMode) {
+            console.error(message)
+            Qt.exit(1)
+            return
+        }
         errorDialog.text = message
         errorDialog.open()
         console.error(message)
     }
 
     function onAppQuitRequired(appName) {
+        if (dockMode) {
+            onLaunchFailed(qsTr("Another app is running on the host: %1. Quit it before starting this stream.").arg(appName))
+            return
+        }
         quitAppDialog.appName = appName
         quitAppDialog.open()
     }

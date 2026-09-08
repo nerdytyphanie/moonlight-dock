@@ -50,6 +50,7 @@ Item {
 
     function displayLaunchWarning(text)
     {
+        if (dockMode) { console.warn(text); return }
         // This toast appears for 3 seconds, just shorter than how long
         // Session will wait for it to be displayed. This gives it time
         // to transition to invisible before continuing.
@@ -67,11 +68,16 @@ Item {
         stackView.replace(stackView.currentItem, component.createObject(stackView, {"appName": appName}), StackView.Immediate)
 
         // Show the Qt window again to show quit segue
-        window.visible = true
+        if (!dockMode) window.visible = true
     }
 
     function sessionFinished(portTestResult)
     {
+        if (dockMode) {
+            if (streamSegueErrorDialog.text) console.error(streamSegueErrorDialog.text)
+            Qt.exit(streamSegueErrorDialog.text ? 1 : 0)
+            return
+        }
         if (portTestResult !== 0 && portTestResult !== -1 && streamSegueErrorDialog.text) {
             streamSegueErrorDialog.text += "\n\n" + qsTr("This PC's Internet connection is blocking Moonlight. Streaming over the Internet may not work while connected to this network.")
         }

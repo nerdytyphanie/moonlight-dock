@@ -30,6 +30,9 @@ ApplicationWindow {
             Material.background = "#303030"
         }
 
+        // Dock mode keeps the Qt launcher and its configuration dialogs invisible.
+        if (dockMode) return
+
         // Show the window according to the user's preferences
         if (SystemProperties.hasDesktopEnvironment) {
             if (StreamingPreferences.uiDisplayMode == StreamingPreferences.UI_MAXIMIZED) {

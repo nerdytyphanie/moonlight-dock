@@ -770,6 +770,7 @@ int main(int argc, char *argv[])
     }
 
     if (hasGUI) {
+        engine.rootContext()->setContextProperty("dockMode", app.property("dockParent").toULongLong() != 0);
         engine.rootContext()->setContextProperty("initialView", initialView);
 
         // Load the main.qml file

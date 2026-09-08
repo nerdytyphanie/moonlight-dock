@@ -1,4 +1,5 @@
 #include "commandlineparser.h"
+#include "dockmode.h"
 
 #include <QCommandLineParser>
 #include <QRegularExpression>
@@ -63,7 +64,7 @@ public:
         UINT flags = MB_OK | MB_TOPMOST | MB_SETFOREGROUND;
         flags |= (type == Info ? MB_ICONINFORMATION : MB_ICONERROR);
         QString title = "Moonlight";
-        MessageBoxW(nullptr, reinterpret_cast<const wchar_t *>(message.utf16()),
+        if (!dockRequested()) MessageBoxW(nullptr, reinterpret_cast<const wchar_t *>(message.utf16()),
                     reinterpret_cast<const wchar_t *>(title.utf16()), flags);
     #endif
         message = message.endsWith('\n') ? message : message + '\n';
@@ -358,6 +359,7 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     parser.addValueOption("bitrate", "bitrate in Kbps");
     parser.addValueOption("packet-size", "video packet size");
     parser.addChoiceOption("display-mode", "display mode", m_WindowModeMap.keys());
+    parser.addValueOption("dock-parent", "Windows parent HWND (decimal or 0x hexadecimal); start hidden and embed before showing");
     parser.addChoiceOption("audio-config", "audio config", m_AudioConfigMap.keys());
     parser.addToggleOption("multi-controller", "multiple controller support");
     parser.addToggleOption("quit-after", "quit app after session");
@@ -518,6 +520,21 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     parser.handleHelpAndVersionOptions();
 
     // Verify that both host and app has been provided
+    if (parser.isSet("dock-parent")) {
+#ifdef Q_OS_WIN32
+        bool valid = false;
+        const QString value = parser.value("dock-parent");
+        const qulonglong handle = value.toULongLong(&valid, value.startsWith("0x", Qt::CaseInsensitive) ? 16 : 10);
+        if (!valid || !handle || handle != static_cast<quintptr>(handle) ||
+            !IsWindow(reinterpret_cast<HWND>(static_cast<quintptr>(handle)))) {
+            parser.showError("dock-parent must name a live Windows window.");
+        }
+        QCoreApplication::instance()->setProperty("dockParent", QVariant::fromValue(handle));
+        preferences->windowMode = m_WindowModeMap["windowed"];
+#else
+        parser.showError("Dock mode is only available on Windows.");
+#endif
+    }
     auto posArgs = parser.positionalArguments();
     if (posArgs.length() < 2) {
         parser.showError("Host not provided");

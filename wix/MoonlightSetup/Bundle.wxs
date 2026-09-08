@@ -22,6 +22,9 @@
 
     <bal:Condition Message="This version of Moonlight requires Windows 10 or later." Condition="VersionNT &gt;= v10.0" />
     <bal:Condition Message="This version of Moonlight requires a 64-bit version of Windows." Condition="NativeMachine &lt;&gt; 332" />
+    <?ifdef DockX64Only ?>
+    <bal:Condition Message="This Moonlight Dock package requires x64 Windows." Condition="NativeMachine = 34404" />
+    <?endif ?>
 
     <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles6432Folder]Moonlight Game Streaming" />
 
@@ -76,6 +79,7 @@
         <ExitCode Value="1638" Behavior="success" />
       </ExePackage>
 
+      <?ifndef DockX64Only ?>
       <ExePackage Cache="remove"
                   PerMachine="yes"
                   Permanent="yes"
@@ -95,6 +99,7 @@
         <!-- Newer version installed is fine -->
         <ExitCode Value="1638" Behavior="success" />
       </ExePackage>
+      <?endif ?>
 
       <MsiPackage Id="Moonlight_x64"
                   SourceFile="$(env.BUILD_ROOT)\build-x64-$(env.BUILD_CONFIG)\Moonlight.msi"
@@ -105,6 +110,7 @@
         <MsiProperty Name="ADDDESKTOPSHORTCUT" Value="[AddDesktopShortcutCheckbox]" />
       </MsiPackage>
 
+      <?ifndef DockX64Only ?>
       <MsiPackage Id="Moonlight_arm64"
                   SourceFile="$(env.BUILD_ROOT)\build-arm64-$(env.BUILD_CONFIG)\Moonlight.msi"
                   Name="Moonlight_arm64.msi"
@@ -113,6 +119,7 @@
         <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />
         <MsiProperty Name="ADDDESKTOPSHORTCUT" Value="[AddDesktopShortcutCheckbox]" />
       </MsiPackage>
+      <?endif ?>
     </Chain>
 
   </Bundle>

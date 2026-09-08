@@ -1,4 +1,8 @@
 #include "session.h"
+#include "dockmode.h"
+#ifdef Q_OS_WIN32
+#include "dockwindow.h"
+#endif
 #include "settings/streamingpreferences.h"
 #include "streaming/streamutils.h"
 #include "backend/richpresencemanager.h"
@@ -907,6 +911,10 @@ bool Session::initialize()
 
 void Session::emitLaunchWarning(QString text)
 {
+    if (dockParentHandle()) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "%s", qPrintable(text));
+        return;
+    }
     // Emit the warning to the UI
     emit displayLaunchWarning(text);
 
@@ -1257,6 +1265,18 @@ private:
 void Session::getWindowDimensions(int& x, int& y,
                                   int& width, int& height)
 {
+#ifdef Q_OS_WIN32
+    if (dockParentHandle()) {
+        HWND parent = reinterpret_cast<HWND>(dockParentHandle());
+        RECT area;
+        POINT origin = {};
+        if (GetClientRect(parent, &area) && ClientToScreen(parent, &origin)) {
+            x = origin.x; y = origin.y;
+            width = qMax(1L, area.right); height = qMax(1L, area.bottom);
+            return;
+        }
+    }
+#endif
     int displayIndex = 0;
 
     if (m_Window != nullptr) {
@@ -1431,6 +1451,7 @@ void Session::updateOptimalWindowDisplayMode()
 
 void Session::toggleFullscreen()
 {
+    if (dockParentHandle()) return; // The embedding host controls window geometry.
     bool fullScreen = !(SDL_GetWindowFlags(m_Window) & m_FullScreenFlag);
 
 #if defined(Q_OS_WIN32) || defined(Q_OS_DARWIN)
@@ -1787,10 +1808,11 @@ void Session::execInternal()
 
     // We always want a resizable window with High DPI enabled
     Uint32 defaultWindowFlags = SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE;
+    if (dockParentHandle()) defaultWindowFlags |= SDL_WINDOW_HIDDEN;
 
     // If we're starting in windowed mode and the Moonlight GUI is maximized or
     // minimized, match that with the streaming window.
-    if (!m_IsFullScreen && m_QtWindow != nullptr) {
+    if (!dockParentHandle() && !m_IsFullScreen && m_QtWindow != nullptr) {
 #if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
         // Qt 5.10+ can propagate multiple states together
         if (m_QtWindow->windowStates() & Qt::WindowMaximized) {
@@ -1964,7 +1986,28 @@ void Session::execInternal()
     // Hijack this thread to be the SDL main thread. We have to do this
     // because we want to suspend all Qt processing until the stream is over.
     SDL_Event event;
+#ifdef Q_OS_WIN32
+    if (dockParentHandle()) {
+        SDL_SysWMinfo info = {};
+        SDL_VERSION(&info.version);
+        if (!SDL_GetWindowWMInfo(m_Window, &info) || info.subsystem != SDL_SYSWM_WINDOWS ||
+            !attachDockWindow(info.info.win.window, reinterpret_cast<HWND>(dockParentHandle()))) {
+            emit displayLaunchError(tr("Could not attach the stream to its parent window."));
+            goto DispatchDeferredCleanup;
+        }
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Moonlight Dock: attached HWND %p to parent %p before showing",
+                    info.info.win.window, reinterpret_cast<void*>(dockParentHandle()));
+        // Showing through SDL delivers the initial SHOWN event that initializes the decoder.
+        SDL_ShowWindow(m_Window);
+    }
+#endif
     for (;;) {
+#ifdef Q_OS_WIN32
+        if (dockParentHandle() && !IsWindow(reinterpret_cast<HWND>(dockParentHandle()))) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Moonlight Dock: parent closed");
+            goto DispatchDeferredCleanup;
+        }
+#endif
 #if SDL_VERSION_ATLEAST(2, 0, 18) && !defined(STEAM_LINK)
         // SDL 2.0.18 has a proper wait event implementation that uses platform
         // support to block on events rather than polling on Windows, macOS, X11,
