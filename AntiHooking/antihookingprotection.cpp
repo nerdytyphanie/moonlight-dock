@@ -68,6 +68,10 @@ private:
 
         for (int i = 0; i < ARRAYSIZE(k_BlacklistedDlls); i++) {
             if (_wcsicmp(dllName, k_BlacklistedDlls[i]) == 0) {
+                if ((_wcsicmp(dllName, L"RTSSHooks.dll") == 0 || _wcsicmp(dllName, L"RTSSHooks64.dll") == 0) &&
+                    GetEnvironmentVariableW(L"MOONLIGHT_DOCK_STATS_MAPPING", nullptr, 0) > 1) {
+                    return false;
+                }
                 return true;
             }
         }

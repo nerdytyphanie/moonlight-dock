@@ -4,6 +4,7 @@
 #include <QQueue>
 
 #include "decoder.h"
+#include "dockstats.h"
 #include "ffmpeg-renderers/renderer.h"
 #include "ffmpeg-renderers/pacer/pacer.h"
 
@@ -108,6 +109,7 @@ private:
     int m_VideoFormat;
     bool m_NeedsSpsFixup;
     bool m_TestOnly;
+    DockStatsPublisher m_DockStats;
     SDL_Thread* m_DecoderThread;
     SDL_atomic_t m_DecoderThreadShouldQuit;
 
