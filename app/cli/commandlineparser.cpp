@@ -494,8 +494,8 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     // Resolve --performance-overlay and --no-performance-overlay options
     preferences->showPerformanceOverlay = parser.getToggleOptionValue("performance-overlay", preferences->showPerformanceOverlay);
 
-    // Resolve --hdr and --no-hdr options
-    preferences->enableHdr = parser.getToggleOptionValue("hdr", preferences->enableHdr);
+    // Command-line streams require an explicit --hdr, regardless of saved GUI preferences.
+    preferences->enableHdr = parser.getToggleOptionValue("hdr", false);
 
     // Resolve --yuv444 and --no-yuv444 options
     preferences->enableYUV444 = parser.getToggleOptionValue("yuv444", preferences->enableYUV444);
