@@ -841,14 +841,8 @@ bool Session::initialize()
         m_SupportedVideoFormats.deprioritizeByMask(~VIDEO_FORMAT_MASK_YUV444);
     }
 
-    // Mask off 10-bit codecs if HDR is not enabled
-    if (!m_Preferences->enableHdr) {
-        m_SupportedVideoFormats.removeByMask(VIDEO_FORMAT_MASK_10BIT);
-    }
-    else {
-        // Deprioritize 8-bit codecs if HDR is enabled
-        m_SupportedVideoFormats.deprioritizeByMask(~VIDEO_FORMAT_MASK_10BIT);
-    }
+    // Prefer 10-bit video for both SDR and HDR, retaining 8-bit fallbacks.
+    m_SupportedVideoFormats.deprioritizeByMask(~VIDEO_FORMAT_MASK_10BIT);
 
     switch (m_Preferences->windowMode)
     {
@@ -1022,6 +1016,26 @@ bool Session::validateLaunch(SDL_Window* testWindow)
                 emitLaunchWarning(tr("Your client GPU doesn't support H.264 decoding. This may cause poor streaming performance."));
             }
         }
+    }
+
+    if (!m_Preferences->enableHdr) {
+        m_SupportedVideoFormats.retainSupportedTenBitFormats(m_Computer->serverCodecModeSupport,
+            [&](int format) {
+                const auto selection = m_Preferences->videoDecoderSelection == StreamingPreferences::VDS_FORCE_SOFTWARE ?
+                    StreamingPreferences::VDS_FORCE_SOFTWARE : StreamingPreferences::VDS_FORCE_HARDWARE;
+                const auto availability = getDecoderAvailability(testWindow, selection, format,
+                    m_StreamConfig.width, m_StreamConfig.height, m_StreamConfig.fps);
+                const bool supported = selection == StreamingPreferences::VDS_FORCE_SOFTWARE ?
+                    availability != DecoderAvailability::None : availability == DecoderAvailability::Hardware;
+                if (!supported) {
+                    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                "Skipping 10-bit video format 0x%x: client decoder unavailable", format);
+                }
+                return supported;
+            });
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "10-bit SDR negotiation: %s",
+                    (m_SupportedVideoFormats & VIDEO_FORMAT_MASK_10BIT) ?
+                        "supported by host and client" : "using 8-bit fallback");
     }
 
     if (m_Preferences->enableHdr) {
@@ -1566,6 +1580,7 @@ bool Session::startConnectionAsync()
         http.startApp(m_Computer->currentGameId != 0 ? "resume" : "launch",
                       m_Computer->isNvidiaServerSoftware,
                       m_App.id, &m_StreamConfig,
+                      m_Preferences->enableHdr,
                       enableGameOptimizations,
                       m_Preferences->playAudioOnHost,
                       m_InputHandler->getAttachedGamepadMask(),

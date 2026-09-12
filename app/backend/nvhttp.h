@@ -166,6 +166,7 @@ public:
              bool isGfe,
              int appId,
              PSTREAM_CONFIGURATION streamConfig,
+             bool enableHdr,
              bool sops,
              bool localAudio,
              int gamepadMask,

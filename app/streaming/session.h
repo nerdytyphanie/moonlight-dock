@@ -87,6 +87,22 @@ public:
         int val = *this;
         return val & mask;
     }
+
+    template<typename DecoderSupported>
+    void retainSupportedTenBitFormats(int serverCodecModes, DecoderSupported decoderSupported)
+    {
+        const int hostFormats = maskByServerCodecModes(serverCodecModes & SCM_MASK_10BIT);
+        for (int i = 0; i < length();) {
+            const int format = value(i);
+            if ((format & VIDEO_FORMAT_MASK_10BIT) &&
+                    (!(format & hostFormats) || !decoderSupported(format))) {
+                removeAt(i);
+            }
+            else {
+                i++;
+            }
+        }
+    }
 };
 
 class Session : public QObject
