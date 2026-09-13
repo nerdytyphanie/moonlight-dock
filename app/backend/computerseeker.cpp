@@ -1,6 +1,7 @@
 #include "computerseeker.h"
 #include "computermanager.h"
 #include <QTimer>
+#include <QUrl>
 
 ComputerSeeker::ComputerSeeker(ComputerManager *manager, QString computerName, QObject *parent)
     : QObject(parent), m_ComputerManager(manager), m_ComputerName(computerName),
@@ -46,6 +47,15 @@ void ComputerSeeker::onComputerUpdated(NvComputer *computer)
 bool ComputerSeeker::matchComputer(NvComputer *computer) const
 {
     QString value = m_ComputerName.toLower();
+
+    // A saved manual/LAN address can belong to an obsolete server UUID after a
+    // reinstall. An explicit IP must match the address that actually responded.
+    const auto target = QUrl::fromUserInput("moonlight://" + m_ComputerName);
+    const QHostAddress targetAddress(target.host());
+    if (!targetAddress.isNull()) {
+        return QHostAddress(computer->activeAddress.address()) == targetAddress &&
+               computer->activeAddress.port() == target.port(DEFAULT_HTTP_PORT);
+    }
 
     if (computer->name.toLower() == value || computer->uuid.toLower() == value) {
         return true;

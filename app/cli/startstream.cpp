@@ -4,6 +4,7 @@
 #include "streaming/session.h"
 
 #include <QCoreApplication>
+#include <QPointer>
 #include <QTimer>
 
 #define COMPUTER_SEEK_TIMEOUT 30000
@@ -48,6 +49,24 @@ class LauncherPrivate
 public:
     LauncherPrivate(Launcher *q) : q_ptr(q) {}
 
+    ~LauncherPrivate() { stopAppPolling(); }
+
+    void stopAppPolling()
+    {
+        if (m_AppPolling && m_ComputerManager) {
+            m_ComputerManager->stopPollingAsync();
+        }
+        m_AppPolling = false;
+    }
+
+    void setState(State state)
+    {
+        m_State = state;
+        if (state == StateStartSession || state == StateFailure) {
+            stopAppPolling();
+        }
+    }
+
     void handleEvent(Event event)
     {
         Q_Q(Launcher);
@@ -60,6 +79,11 @@ public:
             if (m_State == StateInit) {
                 m_State = StateSeekComputer;
                 m_ComputerManager = event.computerManager;
+
+                // ComputerSeeker releases its polling reference when the PC is found.
+                // Keep a separate reference until its application list is available.
+                m_ComputerManager->startPolling();
+                m_AppPolling = true;
 
                 m_ComputerSeeker = new ComputerSeeker(m_ComputerManager, m_ComputerName, q);
                 q->connect(m_ComputerSeeker, &ComputerSeeker::computerFound,
@@ -80,12 +104,15 @@ public:
         case Event::ComputerFound:
             if (m_State == StateSeekComputer) {
                 if (event.computer->pairState == NvComputer::PS_PAIRED) {
-                    m_State = StateSeekApp;
+                    setState(StateSeekApp);
                     m_Computer = event.computer;
                     m_TimeoutTimer->start(APP_SEEK_TIMEOUT);
                     emit q->searchingApp();
+                    Event updated(Event::ComputerUpdated);
+                    updated.computer = m_Computer;
+                    handleEvent(updated);
                 } else {
-                    m_State = StateFailure;
+                    setState(StateFailure);
                     QString msg = QObject::tr("Computer %1 has not been paired. "
                                               "Please open Moonlight to pair before streaming.")
                             .arg(event.computer->name);
@@ -95,13 +122,13 @@ public:
             break;
         // Occurs when a computer is updated
         case Event::ComputerUpdated:
-            if (m_State == StateSeekApp) {
+            if (m_State == StateSeekApp && event.computer == m_Computer) {
                 int index = getAppIndex();
                 if (-1 != index) {
                     app = m_Computer->appList[index];
                     m_TimeoutTimer->stop();
                     if (isNotStreaming() || isStreamingApp(app)) {
-                        m_State = StateStartSession;
+                        setState(StateStartSession);
                         session = new Session(m_Computer, app, m_Preferences);
                         emit q->sessionCreated(app.name, session);
                     } else {
@@ -122,18 +149,18 @@ public:
         // quit.
         case Event::AppQuitCompleted:
             if (m_State == StateSeekApp && !event.errorMessage.isEmpty()) {
-                m_State = StateFailure;
+                setState(StateFailure);
                 emit q->failed(QObject::tr("Quitting app failed, reason: %1").arg(event.errorMessage));
             }
             break;
         // Occurs when computer or app search timed out
         case Event::Timedout:
             if (m_State == StateSeekComputer) {
-                m_State = StateFailure;
+                setState(StateFailure);
                 emit q->failed(QObject::tr("Failed to connect to %1").arg(m_ComputerName));
             }
             if (m_State == StateSeekApp) {
-                m_State = StateFailure;
+                setState(StateFailure);
                 emit q->failed(QObject::tr("Failed to find application %1").arg(m_AppName));
             }
             break;
@@ -174,7 +201,8 @@ public:
     QString m_ComputerName;
     QString m_AppName;
     StreamingPreferences *m_Preferences;
-    ComputerManager *m_ComputerManager;
+    QPointer<ComputerManager> m_ComputerManager;
+    bool m_AppPolling = false;
     ComputerSeeker *m_ComputerSeeker;
     NvComputer *m_Computer;
     State m_State;
