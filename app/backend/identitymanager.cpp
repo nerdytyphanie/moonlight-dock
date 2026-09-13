@@ -185,7 +185,9 @@ QSslConfiguration
 IdentityManager::getSslConfig()
 {
     QSslConfiguration sslConfig(QSslConfiguration::defaultConfiguration());
-    sslConfig.setLocalCertificate(getSslCertificate());
+    // Qt Schannel mutates the native certificate context during a handshake
+    // (QTBUG-147161). Reparse it so concurrent requests never share that context.
+    sslConfig.setLocalCertificate(QSslCertificate(m_CachedPemCert));
     sslConfig.setPrivateKey(getSslKey());
     return sslConfig;
 }
