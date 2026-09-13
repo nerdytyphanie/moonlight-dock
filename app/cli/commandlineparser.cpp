@@ -3,6 +3,8 @@
 
 #include <QCommandLineParser>
 #include <QRegularExpression>
+#include <QHostAddress>
+#include <QUrl>
 
 #if defined(Q_OS_WIN)
 #include <qt_windows.h>
@@ -348,6 +350,9 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     // Add other arguments and options
     parser.addPositionalArgument("host", "Host computer name, UUID, or IP address", "<host>");
     parser.addPositionalArgument("app", "App to stream", "\"<app>\"");
+    parser.addValueOption("app-id", "Numeric server application ID for direct IP launch");
+    parser.addValueOption("server-cert-sha256", "Trusted server certificate SHA-256 for direct launch");
+    parser.addValueOption("https-port", "Server HTTPS port for direct launch");
 
     parser.addFlagOption("720",  "1280x720 resolution");
     parser.addFlagOption("1080", "1920x1080 resolution");
@@ -545,6 +550,26 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
         parser.showError("App not provided");
     }
     m_AppName = parser.positionalArguments().at(2);
+
+    if (parser.isSet("app-id")) {
+        bool valid = false;
+        m_AppId = parser.value("app-id").toInt(&valid);
+        if (!valid || m_AppId <= 0) parser.showError("app-id must be a positive server application ID");
+        QString fingerprint = parser.value("server-cert-sha256");
+        if (!QRegularExpression("^[0-9a-fA-F]{64}$").match(fingerprint).hasMatch())
+            parser.showError("Direct launch requires server-cert-sha256");
+        m_ServerFingerprint = QByteArray::fromHex(fingerprint.toLatin1());
+        int port = parser.value("https-port").toInt(&valid);
+        if (!valid || !inRange(port, 1, 65535)) parser.showError("Direct launch requires a valid https-port");
+        m_HttpsPort = static_cast<quint16>(port);
+        const QUrl target = QUrl::fromUserInput("moonlight://" + m_Host);
+        if (!target.isValid() || QHostAddress(target.host()).isNull() || !target.userInfo().isEmpty() ||
+            !target.path().isEmpty() || target.hasQuery() || target.hasFragment() || target.port(47989) < 1)
+            parser.showError("Direct launch requires a literal IP address, optionally with its HTTP port");
+    }
+    else if (parser.isSet("server-cert-sha256") || parser.isSet("https-port")) {
+        parser.showError("Direct launch certificate and port require app-id");
+    }
 }
 
 QString StreamCommandLineParser::getHost() const
@@ -556,6 +581,10 @@ QString StreamCommandLineParser::getAppName() const
 {
     return m_AppName;
 }
+
+int StreamCommandLineParser::getAppId() const { return m_AppId; }
+QByteArray StreamCommandLineParser::getServerFingerprint() const { return m_ServerFingerprint; }
+quint16 StreamCommandLineParser::getHttpsPort() const { return m_HttpsPort; }
 
 ListCommandLineParser::ListCommandLineParser()
 {

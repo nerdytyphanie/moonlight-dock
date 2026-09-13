@@ -63,10 +63,16 @@ public:
 
     QString getHost() const;
     QString getAppName() const;
+    int getAppId() const;
+    QByteArray getServerFingerprint() const;
+    quint16 getHttpsPort() const;
 
 private:
     QString m_Host;
     QString m_AppName;
+    int m_AppId = 0;
+    QByteArray m_ServerFingerprint;
+    quint16 m_HttpsPort = 0;
     QMap<QString, StreamingPreferences::WindowMode> m_WindowModeMap;
     QMap<QString, StreamingPreferences::AudioConfig> m_AudioConfigMap;
     QMap<QString, StreamingPreferences::VideoCodecConfig> m_VideoCodecMap;

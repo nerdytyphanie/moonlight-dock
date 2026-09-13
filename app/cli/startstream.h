@@ -23,6 +23,7 @@ public:
     explicit Launcher(QString computer, QString app,
                       StreamingPreferences* preferences,
                       QObject *parent = nullptr);
+    void setDirectTarget(int appId, QByteArray serverFingerprint, quint16 httpsPort);
     ~Launcher();
     Q_INVOKABLE void execute(ComputerManager *manager);
     Q_INVOKABLE void quitRunningApp();

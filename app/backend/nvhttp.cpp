@@ -186,6 +186,17 @@ NvHTTP::getServerInfo(NvLogLevel logLevel, bool fastFail)
     return serverInfo;
 }
 
+QString NvHTTP::getDirectServerInfo(const QByteArray& certificateSha256)
+{
+    if (certificateSha256.size() != 32 || httpsPort() == 0) {
+        throw std::invalid_argument("A server certificate fingerprint and HTTPS port are required for direct launch");
+    }
+    m_ServerFingerprint = certificateSha256;
+    QString info = openConnectionToString(m_BaseUrlHttps, "serverinfo", nullptr, REQUEST_TIMEOUT_MS);
+    verifyResponseStatus(info);
+    return info;
+}
+
 void
 NvHTTP::startApp(QString verb,
                  bool isGfe,
@@ -421,6 +432,16 @@ void NvHTTP::handleSslErrors(QNetworkReply* reply, const QList<QSslError>& error
 {
     bool ignoreErrors = true;
 
+    if (!m_ServerFingerprint.isEmpty()) {
+        const auto certificate = reply->sslConfiguration().peerCertificate();
+        if (certificate.digest(QCryptographicHash::Sha256) != m_ServerFingerprint) return;
+        for (const auto& error : errors) {
+            if (error.certificate() != certificate) return;
+        }
+        reply->ignoreSslErrors(errors);
+        return;
+    }
+
     if (m_ServerCert.isNull()) {
         // We should never make an HTTPS request without a cert
         Q_ASSERT(!m_ServerCert.isNull());
@@ -528,6 +549,15 @@ NvHTTP::openConnection(QUrl baseUrl,
     // We must clear out cached authentication and connections or
     // GFE will puke next time
     m_Nam.clearAccessCache();
+
+    if (reply->error() == QNetworkReply::NoError && baseUrl.scheme() == "https" && !m_ServerFingerprint.isEmpty()) {
+        const auto certificate = reply->sslConfiguration().peerCertificate();
+        if (certificate.digest(QCryptographicHash::Sha256) != m_ServerFingerprint) {
+            delete reply;
+            throw GfeHttpResponseException(401, "Direct launch server certificate mismatch");
+        }
+        m_ServerCert = certificate;
+    }
 
     // Handle error
     if (reply->error() != QNetworkReply::NoError)

@@ -120,6 +120,8 @@ public:
     QString
     getServerInfo(NvLogLevel logLevel, bool fastFail = false);
 
+    QString getDirectServerInfo(const QByteArray& certificateSha256);
+
     static
     void
     verifyResponseStatus(QString xml);
@@ -199,4 +201,5 @@ private:
     NvAddress m_Address;
     QNetworkAccessManager m_Nam;
     QSslCertificate m_ServerCert;
+    QByteArray m_ServerFingerprint;
 };

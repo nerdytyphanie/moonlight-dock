@@ -6,6 +6,11 @@
 #include <QCoreApplication>
 #include <QPointer>
 #include <QTimer>
+#include <QFutureWatcher>
+#include <QPromise>
+#include <QThreadPool>
+#include <QUrl>
+#include <memory>
 
 #define COMPUTER_SEEK_TIMEOUT 30000
 #define APP_SEEK_TIMEOUT 10000
@@ -67,6 +72,73 @@ public:
         }
     }
 
+    void startDirect(bool quitExisting = false)
+    {
+        Q_Q(Launcher);
+        if (m_DirectResolving) return;
+        m_DirectResolving = true;
+        struct Result { QSharedPointer<NvComputer> computer; QString error; };
+        auto promise = std::make_shared<QPromise<Result>>();
+        auto watcher = new QFutureWatcher<Result>(q);
+        q->connect(watcher, &QFutureWatcher<Result>::finished, q, [this, q, watcher]() {
+            const auto result = watcher->result();
+            watcher->deleteLater();
+            m_DirectResolving = false;
+            if (!result.error.isEmpty()) {
+                setState(StateFailure);
+                emit q->failed(result.error);
+                return;
+            }
+            m_DirectComputer = result.computer;
+            m_Computer = m_DirectComputer.data();
+            if (m_Computer->pairState != NvComputer::PS_PAIRED) {
+                setState(StateFailure);
+                emit q->failed(QObject::tr("The server at %1 has not paired this Moonlight client.").arg(m_ComputerName));
+                return;
+            }
+            NvApp app;
+            app.id = m_DirectAppId;
+            app.name = m_AppName;
+            app.hdrSupported = (m_Computer->serverCodecModeSupport & SCM_MASK_10BIT) != 0;
+            if (!isNotStreaming() && !isStreamingApp(app)) {
+                setState(StateSeekApp);
+                emit q->appQuitRequired(QObject::tr("another application"));
+                return;
+            }
+            setState(StateStartSession);
+            qInfo() << "Direct launch: using supplied app ID" << app.id << "at" << m_Computer->activeAddress.toString()
+                    << "without saved-desktop selection or application-list lookup";
+            auto session = new Session(m_Computer, app, m_Preferences);
+            QObject::connect(session, &QObject::destroyed, [computer = m_DirectComputer]() {});
+            emit q->sessionCreated(app.name, session);
+        });
+        watcher->setFuture(promise->future());
+        promise->start();
+        const auto target = QUrl::fromUserInput("moonlight://" + m_ComputerName);
+        const NvAddress address(target.host(), target.port(DEFAULT_HTTP_PORT));
+        const auto fingerprint = m_DirectFingerprint;
+        const auto httpsPort = m_DirectHttpsPort;
+        QThreadPool::globalInstance()->start(QRunnable::create([promise, address, fingerprint, httpsPort, quitExisting]() {
+            Result result;
+            try {
+                NvHTTP http(address, httpsPort, QSslCertificate());
+                QString info = http.getDirectServerInfo(fingerprint);
+                if (quitExisting && NvHTTP::getXmlString(info, "PairStatus") == "1") {
+                    http.quitApp();
+                    info = http.getDirectServerInfo(fingerprint);
+                }
+                result.computer.reset(new NvComputer(http, info));
+                // The caller supplies the reachable HTTPS port, including custom forwarding.
+                result.computer->activeHttpsPort = httpsPort;
+            }
+            catch (const GfeHttpResponseException& e) { result.error = e.toQString(); }
+            catch (const QtNetworkReplyException& e) { result.error = e.toQString(); }
+            catch (const std::exception& e) { result.error = QString::fromUtf8(e.what()); }
+            promise->addResult(result);
+            promise->finish();
+        }));
+    }
+
     void handleEvent(Event event)
     {
         Q_Q(Launcher);
@@ -79,6 +151,12 @@ public:
             if (m_State == StateInit) {
                 m_State = StateSeekComputer;
                 m_ComputerManager = event.computerManager;
+
+                if (m_DirectAppId != 0) {
+                    emit q->searchingComputer();
+                    startDirect();
+                    break;
+                }
 
                 // ComputerSeeker releases its polling reference when the PC is found.
                 // Keep a separate reference until its application list is available.
@@ -141,6 +219,7 @@ public:
         // confirmation dialog
         case Event::AppQuitRequested:
             if (m_State == StateSeekApp) {
+                if (m_DirectAppId != 0) { startDirect(true); break; }
                 m_ComputerManager->quitRunningApp(m_Computer);
             }
             break;
@@ -200,6 +279,11 @@ public:
     Launcher *q_ptr;
     QString m_ComputerName;
     QString m_AppName;
+    int m_DirectAppId = 0;
+    QByteArray m_DirectFingerprint;
+    quint16 m_DirectHttpsPort = 0;
+    bool m_DirectResolving = false;
+    QSharedPointer<NvComputer> m_DirectComputer;
     StreamingPreferences *m_Preferences;
     QPointer<ComputerManager> m_ComputerManager;
     bool m_AppPolling = false;
@@ -227,6 +311,15 @@ Launcher::Launcher(QString computer, QString app,
 
 Launcher::~Launcher()
 {
+}
+
+void Launcher::setDirectTarget(int appId, QByteArray serverFingerprint, quint16 httpsPort)
+{
+    Q_D(Launcher);
+    Q_ASSERT(d->m_State == StateInit);
+    d->m_DirectAppId = appId;
+    d->m_DirectFingerprint = std::move(serverFingerprint);
+    d->m_DirectHttpsPort = httpsPort;
 }
 
 void Launcher::execute(ComputerManager *manager)
