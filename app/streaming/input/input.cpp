@@ -4,6 +4,7 @@
 #include "settings/mappingmanager.h"
 #include "path.h"
 #include "utils.h"
+#include "dockmode.h"
 
 #include <QtGlobal>
 #include <QDir>
@@ -34,6 +35,13 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
       m_DragButton(0),
       m_NumFingersDown(0)
 {
+    if (dockParentHandle()) {
+        auto choice = QCoreApplication::instance()->property("dockExitButton").toString();
+        if (choice.isEmpty()) choice = "select"; // Hosts predating the option keep hold-to-exit.
+        m_DockExitButton = findDockExitButton(choice.toLatin1().constData());
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Moonlight Dock: SDL hold-to-exit button: %s (3 seconds)",
+                    m_DockExitButton ? m_DockExitButton->name : "disabled");
+    }
     // System keys are always captured when running without a DE
     if (!WMUtils::isRunningDesktopEnvironment()) {
         m_CaptureSystemKeysMode = StreamingPreferences::CSK_ALWAYS;

@@ -34,6 +34,31 @@ const int SdlInputHandler::k_ButtonMap[] = {
     TOUCHPAD_FLAG,
 };
 
+void SdlInputHandler::pollDockExitHold()
+{
+    if (!m_DockExitButton || m_DockExitQueued) return;
+    Uint32 now = SDL_GetTicks();
+    if (static_cast<Uint32>(now - m_LastDockExitPoll) < 50) return;
+    m_LastDockExitPoll = now;
+    for (int i = 0; i < MAX_GAMEPADS; ++i) {
+        // Use the controllers SDL already opened for this stream, including
+        // non-XInput devices. Never combine holds from different controllers.
+        if (!m_DockExitHolds[i].poll(m_GamepadState[i].controller, *m_DockExitButton, now)) continue;
+        SDL_Event event = {};
+        event.type = SDL_QUIT;
+        event.quit.timestamp = now;
+        if (SDL_PushEvent(&event) != 1) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Moonlight Dock: could not queue hold-to-exit quit: %s", SDL_GetError());
+            return;
+        }
+        m_DockExitQueued = true;
+        LiSendMultiControllerEvent(m_GamepadState[i].index, m_GamepadMask, 0, 0, 0, 0, 0, 0, 0);
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Moonlight Dock: %s held for three seconds; queued graceful SDL quit",
+                    m_DockExitButton->name);
+        return;
+    }
+}
+
 GamepadState*
 SdlInputHandler::findStateForGamepad(SDL_JoystickID id)
 {

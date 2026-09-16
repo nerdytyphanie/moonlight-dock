@@ -4,6 +4,7 @@
 #include "backend/computermanager.h"
 
 #include <SDL.h>
+#include "dockexithold.h"
 
 struct GamepadState {
     SDL_GameController* controller;
@@ -72,6 +73,8 @@ public:
     void handleControllerButtonEvent(SDL_ControllerButtonEvent* event);
 
     void handleControllerDeviceEvent(SDL_ControllerDeviceEvent* event);
+
+    void pollDockExitHold();
 
 #if SDL_VERSION_ATLEAST(2, 0, 14)
     void handleControllerSensorEvent(SDL_ControllerSensorEvent* event);
@@ -180,6 +183,10 @@ private:
 
     int m_GamepadMask;
     GamepadState m_GamepadState[MAX_GAMEPADS];
+    const DockExitButton* m_DockExitButton = nullptr;
+    DockExitHold m_DockExitHolds[MAX_GAMEPADS];
+    Uint32 m_LastDockExitPoll = 0;
+    bool m_DockExitQueued = false;
     QSet<short> m_KeysDown;
     bool m_FakeCaptureActive;
     QString m_OldIgnoreDevices;

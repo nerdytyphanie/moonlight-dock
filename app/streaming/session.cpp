@@ -2027,6 +2027,7 @@ void Session::execInternal()
     }
 #endif
     for (;;) {
+        m_InputHandler->pollDockExitHold();
 #ifdef Q_OS_WIN32
         if (dockParentHandle() && !IsWindow(reinterpret_cast<HWND>(dockParentHandle()))) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Moonlight Dock: parent closed");
@@ -2043,7 +2044,7 @@ void Session::execInternal()
         // NB: This behavior was introduced in SDL 2.0.16, but had a few critical
         // issues that could cause indefinite timeouts, delayed joystick detection,
         // and other problems.
-        if (!SDL_WaitEventTimeout(&event, 1000)) {
+        if (!SDL_WaitEventTimeout(&event, dockParentHandle() ? 50 : 1000)) {
             presence.runCallbacks();
             continue;
         }

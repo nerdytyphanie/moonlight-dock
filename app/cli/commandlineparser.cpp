@@ -365,6 +365,9 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     parser.addValueOption("packet-size", "video packet size");
     parser.addChoiceOption("display-mode", "display mode", m_WindowModeMap.keys());
     parser.addValueOption("dock-parent", "Windows parent HWND (decimal or 0x hexadecimal); start hidden and embed before showing");
+    parser.addChoiceOption("dock-exit-button", "controller button to hold for three seconds in Dock mode (default: select)",
+        {"select", "start", "a", "b", "x", "y", "leftbumper", "rightbumper", "leftstick", "rightstick",
+         "dpadup", "dpaddown", "dpadleft", "dpadright", "lefttrigger", "righttrigger"});
     parser.addChoiceOption("audio-config", "audio config", m_AudioConfigMap.keys());
     parser.addToggleOption("multi-controller", "multiple controller support");
     parser.addToggleOption("quit-after", "quit app after session");
@@ -539,6 +542,10 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
 #else
         parser.showError("Dock mode is only available on Windows.");
 #endif
+    }
+    if (parser.isSet("dock-exit-button")) {
+        if (!parser.isSet("dock-parent")) parser.showError("dock-exit-button requires dock-parent");
+        QCoreApplication::instance()->setProperty("dockExitButton", parser.getChoiceOptionValue("dock-exit-button"));
     }
     auto posArgs = parser.positionalArguments();
     if (posArgs.length() < 2) {
