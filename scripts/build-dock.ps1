@@ -7,12 +7,12 @@ $env:BUILD_CONFIG = 'release'
 $env:BUILD_FOLDER = Join-Path $env:BUILD_ROOT 'build-x64-release'
 $env:DEPLOY_FOLDER = Join-Path $env:BUILD_ROOT 'deploy-x64-release'
 $env:INSTALLER_FOLDER = Join-Path $env:BUILD_ROOT 'installer-x64-release'
-$version = '6.1.7-dock.1'
+$version = '6.1.8-dock.1'
 # Rebuild only the generated deployment tree; never harvest a previous portable.dat
 # or its app-local VC runtime into the full installer.
 $deploy = [IO.Path]::GetFullPath($env:DEPLOY_FOLDER)
 if (!$deploy.StartsWith([IO.Path]::GetFullPath($env:BUILD_ROOT) + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid deployment path.' }
-if (Test-Path -LiteralPath $deploy) { Remove-Item -LiteralPath $deploy -Recurse -Force }
+if (Test-Path -LiteralPath $deploy) { Remove-Item -LiteralPath $deploy -Recurse }
 $vs = & "$PSScriptRoot\vswhere.exe" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 if (!$vs) { throw 'Visual Studio C++ tools are required.' }
 foreach ($folder in @($env:BUILD_FOLDER, $env:DEPLOY_FOLDER, $env:INSTALLER_FOLDER)) {
@@ -47,7 +47,7 @@ Copy-Item "$source\app\SDL_GameControllerDB\gamecontrollerdb.txt" $env:DEPLOY_FO
 Check-Exit 'Qt deployment'
 Copy-Item "$source\LICENSE" $env:DEPLOY_FOLDER
 Copy-Item "$source\README.md" (Join-Path $env:DEPLOY_FOLDER 'MoonlightDock-README.md')
-'{"protocol":1,"version":"6.1.7-dock.1"}' | Set-Content (Join-Path $env:DEPLOY_FOLDER 'moonlight-dock.json') -Encoding ascii
+'{"protocol":1,"version":"6.1.8-dock.1"}' | Set-Content (Join-Path $env:DEPLOY_FOLDER 'moonlight-dock.json') -Encoding ascii
 $msbuild = Join-Path $vs 'MSBuild\Current\Bin\MSBuild.exe'
 & $msbuild -Restore "$source\wix\Moonlight\Moonlight.wixproj" /p:Configuration=Release /p:Platform=x64 "/p:MSBuildProjectExtensionsPath=$env:BUILD_FOLDER\" /nologo
 Check-Exit 'MSI packaging'
@@ -62,7 +62,7 @@ Copy-Item (Join-Path (@($crt)[-1]) '*.dll') $env:DEPLOY_FOLDER
 Set-Content (Join-Path $env:DEPLOY_FOLDER 'portable.dat') '' -Encoding ascii
 # Explicit deployment directory only: tests, build products and source are never packaged.
 $zip = Join-Path $env:INSTALLER_FOLDER "MoonlightDockPortable-x64-$version.zip"
-if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip }
 & 'C:\Program Files\7-Zip\7z.exe' a -tzip $zip "$env:DEPLOY_FOLDER\*"
 Check-Exit 'Portable ZIP packaging'
 Get-FileHash "$env:INSTALLER_FOLDER\MoonlightDock*" -Algorithm SHA256

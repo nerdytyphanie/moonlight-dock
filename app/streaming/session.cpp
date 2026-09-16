@@ -2006,7 +2006,17 @@ void Session::execInternal()
         SDL_SysWMinfo info = {};
         SDL_VERSION(&info.version);
         if (!SDL_GetWindowWMInfo(m_Window, &info) || info.subsystem != SDL_SYSWM_WINDOWS ||
-            !attachDockWindow(info.info.win.window, reinterpret_cast<HWND>(dockParentHandle()))) {
+            !attachDockWindow(info.info.win.window, reinterpret_cast<HWND>(dockParentHandle()), []() -> bool {
+                SDL_Event event = {};
+                event.type = SDL_QUIT;
+                event.quit.timestamp = SDL_GetTicks();
+                if (SDL_PushEvent(&event) != 1) {
+                    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Moonlight Dock: could not queue WM_CLOSE quit: %s", SDL_GetError());
+                    return false;
+                }
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Moonlight Dock: WM_CLOSE queued graceful SDL quit");
+                return true;
+            })) {
             emit displayLaunchError(tr("Could not attach the stream to its parent window."));
             goto DispatchDeferredCleanup;
         }
