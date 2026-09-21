@@ -7,7 +7,7 @@ $env:BUILD_CONFIG = 'release'
 $env:BUILD_FOLDER = Join-Path $env:BUILD_ROOT 'build-x64-release'
 $env:DEPLOY_FOLDER = Join-Path $env:BUILD_ROOT 'deploy-x64-release'
 $env:INSTALLER_FOLDER = Join-Path $env:BUILD_ROOT 'installer-x64-release'
-$version = '6.1.9-dock.1'
+$version = '6.1.10-dock.1'
 # Rebuild only the generated deployment tree; never harvest a previous portable.dat
 # or its app-local VC runtime into the full installer.
 $deploy = [IO.Path]::GetFullPath($env:DEPLOY_FOLDER)
@@ -52,7 +52,7 @@ Copy-Item "$source\app\SDL_GameControllerDB\gamecontrollerdb.txt" $env:DEPLOY_FO
 Check-Exit 'Qt deployment'
 Copy-Item "$source\LICENSE" $env:DEPLOY_FOLDER
 Copy-Item "$source\README.md" (Join-Path $env:DEPLOY_FOLDER 'MoonlightDock-README.md')
-'{"protocol":1,"version":"6.1.9-dock.1"}' | Set-Content (Join-Path $env:DEPLOY_FOLDER 'moonlight-dock.json') -Encoding ascii
+'{"protocol":1,"version":"6.1.10-dock.1"}' | Set-Content (Join-Path $env:DEPLOY_FOLDER 'moonlight-dock.json') -Encoding ascii
 $msbuild = Join-Path $vs 'MSBuild\Current\Bin\MSBuild.exe'
 & $msbuild -Restore "$source\wix\Moonlight\Moonlight.wixproj" /p:Configuration=Release /p:Platform=x64 "/p:MSBuildProjectExtensionsPath=$env:BUILD_FOLDER\" /nologo
 Check-Exit 'MSI packaging'
