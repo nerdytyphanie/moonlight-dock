@@ -6,7 +6,7 @@
 
 #include <QtMath>
 
-// How long the Start button must be pressed to toggle mouse emulation
+// How long the right stick click must be pressed to toggle mouse emulation
 #define MOUSE_EMULATION_LONG_PRESS_TIME 750
 
 // How long between polling the gamepad to send virtual mouse input
@@ -311,8 +311,8 @@ void SdlInputHandler::handleControllerButtonEvent(SDL_ControllerButtonEvent* eve
     if (event->state == SDL_PRESSED) {
         state->buttons |= k_ButtonMap[event->button];
 
-        if (event->button == SDL_CONTROLLER_BUTTON_START) {
-            state->lastStartDownTime = SDL_GetTicks();
+        if (event->button == SDL_CONTROLLER_BUTTON_RIGHTSTICK) {
+            state->lastRightStickDownTime = SDL_GetTicks();
         }
         else if (state->mouseEmulationTimer != 0) {
             if (event->button == SDL_CONTROLLER_BUTTON_A) {
@@ -347,8 +347,8 @@ void SdlInputHandler::handleControllerButtonEvent(SDL_ControllerButtonEvent* eve
     else {
         state->buttons &= ~k_ButtonMap[event->button];
 
-        if (event->button == SDL_CONTROLLER_BUTTON_START) {
-            if (SDL_GetTicks() - state->lastStartDownTime > MOUSE_EMULATION_LONG_PRESS_TIME) {
+        if (event->button == SDL_CONTROLLER_BUTTON_RIGHTSTICK) {
+            if (SDL_GetTicks() - state->lastRightStickDownTime > MOUSE_EMULATION_LONG_PRESS_TIME) {
                 if (state->mouseEmulationTimer != 0) {
                     SDL_RemoveTimer(state->mouseEmulationTimer);
                     state->mouseEmulationTimer = 0;
@@ -358,7 +358,7 @@ void SdlInputHandler::handleControllerButtonEvent(SDL_ControllerButtonEvent* eve
                     Session::get()->notifyMouseEmulationMode(false);
                 }
                 else if (m_GamepadMouse) {
-                    // Send the start button up event to the host, since we won't do it below
+                    // Send the right stick button up event to the host, since we won't do it below
                     sendGamepadState(state);
 
                     state->mouseEmulationTimer = SDL_AddTimer(MOUSE_EMULATION_POLLING_INTERVAL, SdlInputHandler::mouseEmulationTimerCallback, state);

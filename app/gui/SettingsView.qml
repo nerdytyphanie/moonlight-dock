@@ -1439,7 +1439,7 @@ Flickable {
                     id: gamepadMouseCheck
                     hoverEnabled: true
                     width: parent.width
-                    text: qsTr("Enable mouse control with gamepads by holding the 'Start' button")
+                    text: qsTr("Enable mouse control with gamepads by holding the right stick click")
                     font.pointSize: 12
                     checked: StreamingPreferences.gamepadMouse
                     onCheckedChanged: {
