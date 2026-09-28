@@ -115,7 +115,8 @@ public:
         watcher->setFuture(promise->future());
         promise->start();
         const auto target = QUrl::fromUserInput("moonlight://" + m_ComputerName);
-        const NvAddress address(target.host(), target.port(DEFAULT_HTTP_PORT));
+        const int httpPort = m_DirectHttpsPort <= 65530 ? m_DirectHttpsPort + 5 : DEFAULT_HTTP_PORT;
+        const NvAddress address(target.host(), target.port(httpPort));
         const auto fingerprint = m_DirectFingerprint;
         const auto httpsPort = m_DirectHttpsPort;
         QThreadPool::globalInstance()->start(QRunnable::create([promise, address, fingerprint, httpsPort, quitExisting]() {
