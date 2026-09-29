@@ -35,6 +35,9 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
+        // Dock mode keeps the launcher and its dialogs invisible.
+        if (dockMode) return
+
         // Show the window according to the user's preferences
         if (SystemProperties.hasDesktopEnvironment) {
             if (StreamingPreferences.uiDisplayMode == StreamingPreferences.UI_MAXIMIZED) {

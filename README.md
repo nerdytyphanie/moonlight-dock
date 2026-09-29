@@ -1,3 +1,64 @@
+# Moonlight Dock
+
+An independent GPLv3 fork of [Moonlight Qt](https://github.com/moonlight-stream/moonlight-qt), based on **v6.1.0**, with an opt-in Windows embedding mode. This is not an official Moonlight release. Modified September 2026; additions are GPL-3.0-or-later. Upstream copyright and license notices remain applicable.
+
+Without the new option, Moonlight retains its normal interface, configuration, pairing, decoding, and controller behavior. The executable remains `Moonlight.exe`.
+
+## Fork downloads
+
+[Releases](https://github.com/nerdytyphanie/moonlight-dock/releases) provide an **x64 setup EXE**, **MSI**, and **portable ZIP**. The ZIP includes runtime dependencies and `portable.dat`; launch from its extracted directory to keep settings portable. Removing `portable.dat` selects Moonlight's normal per-user settings instead.
+
+Each release identifies its matching source tag. Clone with:
+
+```sh
+git clone --recurse-submodules https://github.com/nerdytyphanie/moonlight-dock.git
+cd moonlight-dock
+git checkout v6.1.0-dock.1
+git submodule update --init --recursive
+```
+
+## Embed in any Windows application
+
+Create and retain a native parent window with a nonzero client area, then launch:
+
+```text
+Moonlight.exe stream --dock-parent 0x001A0452 --resolution 1920x1080 --fps 60 HOST "Desktop"
+```
+
+Replace the example HWND with your application's live parent window handle. Decimal and hexadecimal values are accepted. Pair with the server using normal Moonlight pairing beforehand; dock mode does not bypass or automatically approve pairing.
+
+Startup in dock mode:
+
+1. Keep the Qt launcher and its launch dialogs hidden.
+2. Create the SDL stream window with `SDL_WINDOW_HIDDEN`.
+3. Strip its desktop frame, apply `WS_CHILD`, call `SetParent`, and size it to the parent's client area.
+4. Set the child window property `MoonlightDock.StreamWindow` to 1.
+5. Call `SDL_ShowWindow` after attachment. SDL's shown event starts decoder initialization.
+
+The host discovers the child using `EnumChildWindows`, matching both the launched process ID and that property. The adjacent `moonlight-dock.json` file advertises protocol version 1 to hosts that also support unmodified Moonlight. No title matching or hide-after-show loop is needed.
+
+The host owns subsequent size and focus changes. Use `SetWindowPos` when the parent resizes, and restore child keyboard focus when the host activates. Supply Moonlight's existing `--background-gamepad` option if gamepad input is needed without child focus. Dock mode forces windowed rendering and disables Moonlight's fullscreen toggle; the host owns fullscreen presentation.
+
+Post `WM_CLOSE` to the **child** to end the stream. Closing the parent also ends the session. Retain the launched process handle to observe exit and finish host cleanup. Do not wait for decoded video before showing the embedded window: decoder startup depends on SDL's shown/resize events.
+
+Invalid parent handles fail without a message box. Connection errors are logged and terminate with a nonzero exit code instead of waiting on invisible dialogs. If another remote app requires quit confirmation, dock mode reports an error instead of silently quitting it. Use Moonlight's logs and process exit code to present errors in the host. Normal launches retain their dialogs.
+
+Dock mode is Windows-only and uses a native parent window in the interactive desktop. HDR, input focus, DPI changes, and graphics-driver compatibility require testing in the embedding host.
+
+## Build and test the fork
+
+Install Visual Studio 2022 C++ tools, Qt MSVC x64, and 7-Zip. Initialize all submodules, then run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build-dock.ps1 -QtBin C:\Qt\6.10.3\msvc2022_64\bin
+```
+
+The script builds the application, runs hidden native-window attachment checks, and creates setup EXE, MSI, and portable ZIP files in `build/installer-x64-release`. Use a fresh build directory for each release. Tests are outside the deployment tree and are not packaged. Builds do not use the upstream signing identity.
+
+The full installer retains upstream's installation identity and replaces/upgrades regular Moonlight; it is not a separate side-by-side installation. The portable package is independently extractable. The upstream build instructions below also apply.
+
+## Upstream documentation
+
 # Moonlight PC
 
 [Moonlight PC](https://moonlight-stream.org) is an open source PC client for NVIDIA GameStream and [Sunshine](https://github.com/LizardByte/Sunshine).

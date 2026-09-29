@@ -9,6 +9,7 @@
 
 #include "streaming/streamutils.h"
 #include "streaming/session.h"
+#include "streaming/dockwindow.h"
 
 #include <SDL_syswm.h>
 #include <Limelight.h>
@@ -68,8 +69,12 @@ bool isBorderlessFullscreenWindow(SDL_Window* window)
         return false;
     }
 
-    return (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN_DESKTOP) ==
-        SDL_WINDOW_FULLSCREEN_DESKTOP;
+    if ((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN_DESKTOP) ==
+        SDL_WINDOW_FULLSCREEN_DESKTOP) return true;
+    SDL_SysWMinfo info = {};
+    SDL_VERSION(&info.version);
+    return SDL_GetWindowWMInfo(window, &info) && info.subsystem == SDL_SYSWM_WINDOWS &&
+        isFullscreenDockWindow(info.info.win.window);
 }
 
 uint64_t packLuid(const LUID& luid)
@@ -1942,8 +1947,7 @@ void D3D11VARenderer::refreshVrrDisplayState()
     m_VrrBorderlessFlipModel = gotSwapChainDesc &&
         fullscreenStateResult == S_OK &&
         !m_VrrFullscreenExclusive &&
-        (m_VrrWindowFlags & SDL_WINDOW_FULLSCREEN_DESKTOP) ==
-            SDL_WINDOW_FULLSCREEN_DESKTOP &&
+        isBorderlessFullscreenWindow(m_DecoderParams.window) &&
         (swapChainDesc.SwapEffect == DXGI_SWAP_EFFECT_FLIP_DISCARD ||
          swapChainDesc.SwapEffect == DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL);
     m_VrrSwapChainAllowsTearing = gotSwapChainDesc &&

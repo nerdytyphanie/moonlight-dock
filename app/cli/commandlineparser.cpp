@@ -1,7 +1,10 @@
 #include "commandlineparser.h"
+#include "dockmode.h"
 
 #include <QCommandLineParser>
 #include <QRegularExpression>
+#include <QHostAddress>
+#include <QUrl>
 
 #if defined(Q_OS_WIN)
 #include <qt_windows.h>
@@ -59,6 +62,13 @@ public:
 
     void showMessage(QString message, MessageType type) const
     {
+    #if defined(Q_OS_WIN32)
+        UINT flags = MB_OK | MB_TOPMOST | MB_SETFOREGROUND;
+        flags |= (type == Info ? MB_ICONINFORMATION : MB_ICONERROR);
+        QString title = "Moonlight";
+        if (!dockRequested()) MessageBoxW(nullptr, reinterpret_cast<const wchar_t *>(message.utf16()),
+                    reinterpret_cast<const wchar_t *>(title.utf16()), flags);
+    #endif
         message = message.endsWith('\n') ? message : message + '\n';
         fputs(qPrintable(message), type == Info ? stdout : stderr);
     }
@@ -340,6 +350,9 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     // Add other arguments and options
     parser.addPositionalArgument("host", "Host computer name, UUID, or IP address", "<host>");
     parser.addPositionalArgument("app", "App to stream", "\"<app>\"");
+    parser.addValueOption("app-id", "Numeric server application ID for direct IP launch");
+    parser.addValueOption("server-cert-sha256", "Trusted server certificate SHA-256 for direct launch");
+    parser.addValueOption("https-port", "Server HTTPS port for direct launch");
 
     parser.addFlagOption("720",  "1280x720 resolution");
     parser.addFlagOption("1080", "1920x1080 resolution");
@@ -353,6 +366,10 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     parser.addValueOption("bitrate", "bitrate in Kbps");
     parser.addValueOption("packet-size", "video packet size");
     parser.addChoiceOption("display-mode", "display mode", m_WindowModeMap.keys());
+    parser.addValueOption("dock-parent", "Windows parent HWND (decimal or 0x hexadecimal); start hidden and embed before showing");
+    parser.addChoiceOption("dock-exit-button", "controller button to hold for three seconds in Dock mode (default: select)",
+        {"select", "start", "a", "b", "x", "y", "leftbumper", "rightbumper", "leftstick", "rightstick",
+         "dpadup", "dpaddown", "dpadleft", "dpadright", "lefttrigger", "righttrigger"});
     parser.addChoiceOption("audio-config", "audio config", m_AudioConfigMap.keys());
     parser.addToggleOption("multi-controller", "multiple controller support");
     parser.addToggleOption("quit-after", "quit app after session");
@@ -496,8 +513,8 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     // Resolve --performance-overlay and --no-performance-overlay options
     preferences->showPerformanceOverlay = parser.getToggleOptionValue("performance-overlay", preferences->showPerformanceOverlay);
 
-    // Resolve --hdr and --no-hdr options
-    preferences->enableHdr = parser.getToggleOptionValue("hdr", preferences->enableHdr);
+    // Command-line streams require an explicit --hdr, regardless of saved GUI preferences.
+    preferences->enableHdr = parser.getToggleOptionValue("hdr", false);
 
     // Resolve --yuv444 and --no-yuv444 options
     preferences->enableYUV444 = parser.getToggleOptionValue("yuv444", preferences->enableYUV444);
@@ -522,6 +539,25 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     parser.handleHelpAndVersionOptions();
 
     // Verify that both host and app has been provided
+    if (parser.isSet("dock-parent")) {
+#ifdef Q_OS_WIN32
+        bool valid = false;
+        const QString value = parser.value("dock-parent");
+        const qulonglong handle = value.toULongLong(&valid, value.startsWith("0x", Qt::CaseInsensitive) ? 16 : 10);
+        if (!valid || !handle || handle != static_cast<quintptr>(handle) ||
+            !IsWindow(reinterpret_cast<HWND>(static_cast<quintptr>(handle)))) {
+            parser.showError("dock-parent must name a live Windows window.");
+        }
+        QCoreApplication::instance()->setProperty("dockParent", QVariant::fromValue(handle));
+        preferences->windowMode = m_WindowModeMap["windowed"];
+#else
+        parser.showError("Dock mode is only available on Windows.");
+#endif
+    }
+    if (parser.isSet("dock-exit-button")) {
+        if (!parser.isSet("dock-parent")) parser.showError("dock-exit-button requires dock-parent");
+        QCoreApplication::instance()->setProperty("dockExitButton", parser.getChoiceOptionValue("dock-exit-button"));
+    }
     auto posArgs = parser.positionalArguments();
     if (posArgs.length() < 2) {
         parser.showError("Host not provided");
@@ -532,6 +568,26 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
         parser.showError("App not provided");
     }
     m_AppName = parser.positionalArguments().at(2);
+
+    if (parser.isSet("app-id")) {
+        bool valid = false;
+        m_AppId = parser.value("app-id").toInt(&valid);
+        if (!valid || m_AppId <= 0) parser.showError("app-id must be a positive server application ID");
+        QString fingerprint = parser.value("server-cert-sha256");
+        if (!QRegularExpression("^[0-9a-fA-F]{64}$").match(fingerprint).hasMatch())
+            parser.showError("Direct launch requires server-cert-sha256");
+        m_ServerFingerprint = QByteArray::fromHex(fingerprint.toLatin1());
+        int port = parser.value("https-port").toInt(&valid);
+        if (!valid || !inRange(port, 1, 65535)) parser.showError("Direct launch requires a valid https-port");
+        m_HttpsPort = static_cast<quint16>(port);
+        const QUrl target = QUrl::fromUserInput("moonlight://" + m_Host);
+        if (!target.isValid() || QHostAddress(target.host()).isNull() || !target.userInfo().isEmpty() ||
+            !target.path().isEmpty() || target.hasQuery() || target.hasFragment() || target.port(47989) < 1)
+            parser.showError("Direct launch requires a literal IP address, optionally with its HTTP port");
+    }
+    else if (parser.isSet("server-cert-sha256") || parser.isSet("https-port")) {
+        parser.showError("Direct launch certificate and port require app-id");
+    }
 }
 
 QString StreamCommandLineParser::getHost() const
@@ -543,6 +599,10 @@ QString StreamCommandLineParser::getAppName() const
 {
     return m_AppName;
 }
+
+int StreamCommandLineParser::getAppId() const { return m_AppId; }
+QByteArray StreamCommandLineParser::getServerFingerprint() const { return m_ServerFingerprint; }
+quint16 StreamCommandLineParser::getHttpsPort() const { return m_HttpsPort; }
 
 ListCommandLineParser::ListCommandLineParser()
 {

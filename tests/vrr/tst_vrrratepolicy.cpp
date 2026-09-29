@@ -9,6 +9,7 @@ class VrrRatePolicyTest : public QObject
 private slots:
     void calculatedRates();
     void adaptiveHeadroomQualification();
+    void automaticStreamRate();
     void vrrChoicesOmitNativeRefresh();
     void disabledChoicesKeepNativeRefresh();
 };
@@ -39,6 +40,21 @@ void VrrRatePolicyTest::adaptiveHeadroomQualification()
     QVERIFY(!VrrRatePolicy::hasAdaptiveHeadroom(121, 120));
     QVERIFY(!VrrRatePolicy::hasAdaptiveHeadroom(0, 120));
     QVERIFY(!VrrRatePolicy::hasAdaptiveHeadroom(60, 0));
+}
+
+void VrrRatePolicyTest::automaticStreamRate()
+{
+    const int refreshRates[] = {60, 120, 144, 165, 240};
+    const int limits[] = {59, 116, 138, 157, 224};
+    for (int i = 0; i < 5; ++i) {
+        QCOMPARE(VrrRatePolicy::resolveStreamRate(refreshRates[i], refreshRates[i]), limits[i]);
+        QCOMPARE(VrrRatePolicy::resolveStreamRate(500, refreshRates[i]), limits[i]);
+        QVERIFY(VrrRatePolicy::hasAdaptiveHeadroom(limits[i], refreshRates[i]));
+    }
+    QCOMPARE(VrrRatePolicy::resolveStreamRate(90, 120), 90);
+    QCOMPARE(VrrRatePolicy::resolveStreamRate(60, 120), 60);
+    QCOMPARE(VrrRatePolicy::resolveStreamRate(120, 0), 120);
+    QCOMPARE(VrrRatePolicy::resolveStreamRate(0, 120), 0);
 }
 
 void VrrRatePolicyTest::vrrChoicesOmitNativeRefresh()

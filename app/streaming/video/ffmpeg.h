@@ -6,6 +6,7 @@
 
 #include "../bandwidth.h"
 #include "decoder.h"
+#include "dockstats.h"
 #include "ffmpeg-renderers/renderer.h"
 #include "ffmpeg-renderers/pacer/pacer.h"
 
@@ -135,6 +136,7 @@ private:
     bool m_NeedsSpsFixup;
     bool m_TestOnly;
     TestMode m_CurrentTestMode;
+    DockStatsPublisher m_DockStats;
     SDL_Thread* m_DecoderThread;
     SDL_atomic_t m_DecoderThreadShouldQuit;
 

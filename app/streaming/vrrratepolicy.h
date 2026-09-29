@@ -23,6 +23,10 @@ public:
     // floor(refresh - refresh^2 / 3600)
     static int vrrRateForRefresh(int refreshHz);
 
+    // Preserve lower choices; cap higher choices using the same VRR rate
+    // calculation as the settings UI. Unknown refresh leaves FPS unchanged.
+    static int resolveStreamRate(int requestedFps, int refreshHz);
+
     // floor((refresh * 5 / 6) / 5) * 5
     static int lowLatencyRateForRefresh(int refreshHz);
 

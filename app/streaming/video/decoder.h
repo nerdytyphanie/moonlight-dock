@@ -9,6 +9,7 @@
 #define MAX_SLICES 4
 
 typedef struct _VIDEO_STATS {
+    uint64_t receivedVideoBytes;
     uint32_t receivedFrames;
     uint32_t decodedFrames;
     uint32_t renderedFrames;

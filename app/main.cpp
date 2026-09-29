@@ -1010,6 +1010,9 @@ int main(int argc, char *argv[])
             QString host    = streamParser.getHost();
             QString appName = streamParser.getAppName();
             auto launcher   = new CliStartStream::Launcher(host, appName, preferences, &app);
+            if (streamParser.getAppId() != 0) {
+                launcher->setDirectTarget(streamParser.getAppId(), streamParser.getServerFingerprint(), streamParser.getHttpsPort());
+            }
             engine.rootContext()->setContextProperty("launcher", launcher);
             break;
         }
@@ -1043,6 +1046,7 @@ int main(int argc, char *argv[])
     }
 
     if (hasGUI) {
+        engine.rootContext()->setContextProperty("dockMode", app.property("dockParent").toULongLong() != 0);
         engine.rootContext()->setContextProperty("initialView", initialView);
         engine.rootContext()->setContextProperty("runConfigChecks", commandLineParserResult == GlobalCommandLineParser::NormalStartRequested);
 

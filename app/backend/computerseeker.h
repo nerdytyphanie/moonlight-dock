@@ -31,4 +31,6 @@ private:
     ComputerManager *m_ComputerManager;
     QString m_ComputerName;
     QTimer *m_TimeoutTimer;
+    bool m_HostSearchStarted = false;
+    void startHostSearch();
 };

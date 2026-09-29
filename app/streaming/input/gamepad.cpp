@@ -6,7 +6,7 @@
 
 #include <QtMath>
 
-// How long the Start button must be pressed to toggle mouse emulation
+// How long the right stick click must be pressed to toggle mouse emulation
 #define MOUSE_EMULATION_LONG_PRESS_TIME 750
 
 // How long between polling the gamepad to send virtual mouse input
@@ -33,6 +33,31 @@ const int SdlInputHandler::k_ButtonMap[] = {
     PADDLE1_FLAG, PADDLE2_FLAG, PADDLE3_FLAG, PADDLE4_FLAG,
     TOUCHPAD_FLAG,
 };
+
+void SdlInputHandler::pollDockExitHold()
+{
+    if (!m_DockExitButton || m_DockExitQueued) return;
+    Uint32 now = SDL_GetTicks();
+    if (static_cast<Uint32>(now - m_LastDockExitPoll) < 50) return;
+    m_LastDockExitPoll = now;
+    for (int i = 0; i < MAX_GAMEPADS; ++i) {
+        // Use the controllers SDL already opened for this stream, including
+        // non-XInput devices. Never combine holds from different controllers.
+        if (!m_DockExitHolds[i].poll(m_GamepadState[i].controller, *m_DockExitButton, now)) continue;
+        SDL_Event event = {};
+        event.type = SDL_QUIT;
+        event.quit.timestamp = now;
+        if (SDL_PushEvent(&event) != 1) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Moonlight Dock: could not queue hold-to-exit quit: %s", SDL_GetError());
+            return;
+        }
+        m_DockExitQueued = true;
+        LiSendMultiControllerEvent(m_GamepadState[i].index, m_GamepadMask, 0, 0, 0, 0, 0, 0, 0);
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Moonlight Dock: %s held for three seconds; queued graceful SDL quit",
+                    m_DockExitButton->name);
+        return;
+    }
+}
 
 GamepadState*
 SdlInputHandler::findStateForGamepad(SDL_JoystickID id)
@@ -286,8 +311,8 @@ void SdlInputHandler::handleControllerButtonEvent(SDL_ControllerButtonEvent* eve
     if (event->state == SDL_PRESSED) {
         state->buttons |= k_ButtonMap[event->button];
 
-        if (event->button == SDL_CONTROLLER_BUTTON_START) {
-            state->lastStartDownTime = SDL_GetTicks();
+        if (event->button == SDL_CONTROLLER_BUTTON_RIGHTSTICK) {
+            state->lastRightStickDownTime = SDL_GetTicks();
         }
         else if (state->mouseEmulationTimer != 0) {
             if (event->button == SDL_CONTROLLER_BUTTON_A) {
@@ -322,8 +347,8 @@ void SdlInputHandler::handleControllerButtonEvent(SDL_ControllerButtonEvent* eve
     else {
         state->buttons &= ~k_ButtonMap[event->button];
 
-        if (event->button == SDL_CONTROLLER_BUTTON_START) {
-            if (SDL_GetTicks() - state->lastStartDownTime > MOUSE_EMULATION_LONG_PRESS_TIME) {
+        if (event->button == SDL_CONTROLLER_BUTTON_RIGHTSTICK) {
+            if (SDL_GetTicks() - state->lastRightStickDownTime > MOUSE_EMULATION_LONG_PRESS_TIME) {
                 if (state->mouseEmulationTimer != 0) {
                     SDL_RemoveTimer(state->mouseEmulationTimer);
                     state->mouseEmulationTimer = 0;
@@ -333,7 +358,7 @@ void SdlInputHandler::handleControllerButtonEvent(SDL_ControllerButtonEvent* eve
                     Session::get()->notifyMouseEmulationMode(false);
                 }
                 else if (m_GamepadMouse) {
-                    // Send the start button up event to the host, since we won't do it below
+                    // Send the right stick button up event to the host, since we won't do it below
                     sendGamepadState(state);
 
                     state->mouseEmulationTimer = SDL_AddTimer(MOUSE_EMULATION_POLLING_INTERVAL, SdlInputHandler::mouseEmulationTimerCallback, state);

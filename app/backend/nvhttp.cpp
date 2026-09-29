@@ -196,11 +196,23 @@ NvHTTP::getServerInfo(NvLogLevel logLevel, bool fastFail)
     return serverInfo;
 }
 
+QString NvHTTP::getDirectServerInfo(const QByteArray& certificateSha256)
+{
+    if (certificateSha256.size() != 32 || httpsPort() == 0) {
+        throw std::invalid_argument("A server certificate fingerprint and HTTPS port are required for direct launch");
+    }
+    m_ServerFingerprint = certificateSha256;
+    QString info = openConnectionToString(m_BaseUrlHttps, "serverinfo", nullptr, REQUEST_TIMEOUT_MS);
+    verifyResponseStatus(info);
+    return info;
+}
+
 void
 NvHTTP::startApp(QString verb,
                  bool isGfe,
                  int appId,
                  PSTREAM_CONFIGURATION streamConfig,
+                 bool enableHdr,
                  bool sops,
                  bool localAudio,
                  int gamepadMask,
@@ -226,9 +238,9 @@ NvHTTP::startApp(QString verb,
                                    "&additionalStates=1&sops="+QString::number(sops ? 1 : 0)+
                                    "&rikey="+QByteArray(streamConfig->remoteInputAesKey, sizeof(streamConfig->remoteInputAesKey)).toHex()+
                                    "&rikeyid="+QString::number(riKeyId)+
-                                   ((streamConfig->supportedVideoFormats & VIDEO_FORMAT_MASK_10BIT) ?
+                                   ((enableHdr && (streamConfig->supportedVideoFormats & VIDEO_FORMAT_MASK_10BIT)) ?
                                        "&hdrMode=1&clientHdrCapVersion=0&clientHdrCapSupportedFlagsInUint32=0&clientHdrCapMetaDataId=NV_STATIC_METADATA_TYPE_1&clientHdrCapDisplayData=0x0x0x0x0x0x0x0x0x0x0" :
-                                        "")+
+                                        "&hdrMode=0")+
                                    "&localAudioPlayMode="+QString::number(localAudio ? 1 : 0)+
                                    "&surroundAudioInfo="+QString::number(SURROUNDAUDIOINFO_FROM_AUDIO_CONFIGURATION(streamConfig->audioConfiguration))+
                                    "&remoteControllersBitmap="+QString::number(gamepadMask)+
@@ -436,6 +448,16 @@ void NvHTTP::handleSslErrors(QNetworkReply* reply, const QList<QSslError>& error
 {
     bool ignoreErrors = true;
 
+    if (!m_ServerFingerprint.isEmpty()) {
+        const auto certificate = reply->sslConfiguration().peerCertificate();
+        if (certificate.digest(QCryptographicHash::Sha256) != m_ServerFingerprint) return;
+        for (const auto& error : errors) {
+            if (error.certificate() != certificate) return;
+        }
+        reply->ignoreSslErrors(errors);
+        return;
+    }
+
     if (m_ServerCert.isNull()) {
         // We should never make an HTTPS request without a cert
         Q_ASSERT(!m_ServerCert.isNull());
@@ -543,6 +565,15 @@ NvHTTP::openConnection(QUrl baseUrl,
     m_Nam->clearAccessCache();
 #endif
     disconnect(sslErrorsConnection);
+
+    if (reply->error() == QNetworkReply::NoError && baseUrl.scheme() == "https" && !m_ServerFingerprint.isEmpty()) {
+        const auto certificate = reply->sslConfiguration().peerCertificate();
+        if (certificate.digest(QCryptographicHash::Sha256) != m_ServerFingerprint) {
+            delete reply;
+            throw GfeHttpResponseException(401, "Direct launch server certificate mismatch");
+        }
+        m_ServerCert = certificate;
+    }
 
     // Handle error
     if (reply->error() != QNetworkReply::NoError)

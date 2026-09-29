@@ -4,6 +4,7 @@
 #include "backend/computermanager.h"
 
 #include "SDL_compat.h"
+#include "dockexithold.h"
 
 struct GamepadState {
     SDL_GameController* controller;
@@ -17,7 +18,7 @@ struct GamepadState {
 #endif
 
     SDL_TimerID mouseEmulationTimer;
-    uint32_t lastStartDownTime;
+    uint32_t lastRightStickDownTime;
 
     bool clickpadButtonEmulationEnabled;
     bool emulatedClickpadButtonDown;
@@ -103,6 +104,8 @@ public:
     void handleControllerButtonEvent(SDL_ControllerButtonEvent* event);
 
     void handleControllerDeviceEvent(SDL_ControllerDeviceEvent* event);
+
+    void pollDockExitHold();
 
 #if SDL_VERSION_ATLEAST(2, 0, 14)
     void handleControllerSensorEvent(SDL_ControllerSensorEvent* event);
@@ -217,6 +220,10 @@ private:
 
     int m_GamepadMask;
     GamepadState m_GamepadState[MAX_GAMEPADS];
+    const DockExitButton* m_DockExitButton = nullptr;
+    DockExitHold m_DockExitHolds[MAX_GAMEPADS];
+    Uint32 m_LastDockExitPoll = 0;
+    bool m_DockExitQueued = false;
     QSet<short> m_KeysDown;
     bool m_FakeMouseCaptureActive;
     bool m_KeyboardCaptureActive;

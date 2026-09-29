@@ -1,4 +1,9 @@
 #include "session.h"
+#include "dockmode.h"
+#ifdef Q_OS_WIN32
+#include "dockwindow.h"
+#include <SDL_syswm.h>
+#endif
 #include "settings/streamingpreferences.h"
 #include "streaming/streamutils.h"
 #include "streaming/vrrratepolicy.h"
@@ -636,6 +641,18 @@ void Session::snapshotPresentationSettings(SDL_Window* window)
     const bool hasStrictRefreshRate = StreamUtils::tryGetDisplayRefreshRate(window, strictRefreshRate);
     m_PresentationSettings.refreshRate = hasStrictRefreshRate ? strictRefreshRate : 0;
 
+    // Resolve before decoder probing and the server launch request. Only the
+    // negotiated session changes; keep the user's selected FPS intact.
+    if (requestedVrr && hasStrictRefreshRate) {
+        const int requestedFps = m_StreamConfig.fps;
+        m_StreamConfig.fps = VrrRatePolicy::resolveStreamRate(requestedFps, strictRefreshRate);
+        if (m_StreamConfig.fps != requestedFps) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "VRR stream FPS adjusted: %d -> %d for %d Hz display",
+                        requestedFps, m_StreamConfig.fps, strictRefreshRate);
+        }
+    }
+
     // Retain the legacy V-sync behavior when display information is incomplete,
     // but do not use its 60 Hz fallback to qualify VRR.
     const int vsyncRefreshRate = hasStrictRefreshRate ? strictRefreshRate : 60;
@@ -678,10 +695,11 @@ void Session::snapshotPresentationSettings(SDL_Window* window)
             m_PresentationSettings.enableVrr = true;
             m_PresentationSettings.vrrSmoothness =
                 m_Preferences->vrrSmoothness;
-            m_PresentationSettings.effectiveWindowMode = StreamingPreferences::WM_FULLSCREEN_DESKTOP;
+            m_PresentationSettings.effectiveWindowMode = dockParentHandle() ?
+                StreamingPreferences::WM_WINDOWED : StreamingPreferences::WM_FULLSCREEN_DESKTOP;
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                        "VRR requested at %d Hz; forcing borderless desktop fullscreen for this session",
-                        strictRefreshRate);
+                        "VRR requested at %d Hz; using %s for this session",
+                        strictRefreshRate, dockParentHandle() ? "embedded fullscreen host" : "borderless desktop fullscreen");
         }
     }
 
@@ -1003,14 +1021,8 @@ bool Session::initialize(QQuickWindow* qtWindow)
         m_SupportedVideoFormats.deprioritizeByMask(~VIDEO_FORMAT_MASK_YUV444);
     }
 
-    // Mask off 10-bit codecs if HDR is not enabled
-    if (!m_Preferences->enableHdr) {
-        m_SupportedVideoFormats.removeByMask(VIDEO_FORMAT_MASK_10BIT);
-    }
-    else {
-        // Deprioritize 8-bit codecs if HDR is enabled
-        m_SupportedVideoFormats.deprioritizeByMask(~VIDEO_FORMAT_MASK_10BIT);
-    }
+    // Prefer 10-bit video for both SDR and HDR, retaining 8-bit fallbacks.
+    m_SupportedVideoFormats.deprioritizeByMask(~VIDEO_FORMAT_MASK_10BIT);
 
     if (m_PresentationSettings.enableVrr) {
         // The session snapshot has already established that this is an active
@@ -1089,6 +1101,10 @@ bool Session::initialize(QQuickWindow* qtWindow)
 
 void Session::emitLaunchWarning(QString text)
 {
+    if (dockParentHandle()) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "%s", qPrintable(text));
+        return;
+    }
     if (m_Preferences->configurationWarnings) {
         // Queue this launch warning to be displayed after validation
         m_LaunchWarnings.append(text);
@@ -1197,6 +1213,26 @@ bool Session::validateLaunch(SDL_Window* testWindow)
                 emitLaunchWarning(tr("Your client GPU doesn't support H.264 decoding. This may cause poor streaming performance."));
             }
         }
+    }
+
+    if (!m_Preferences->enableHdr) {
+        m_SupportedVideoFormats.retainSupportedTenBitFormats(m_Computer->serverCodecModeSupport,
+            [&](int format) {
+                const auto selection = m_Preferences->videoDecoderSelection == StreamingPreferences::VDS_FORCE_SOFTWARE ?
+                    StreamingPreferences::VDS_FORCE_SOFTWARE : StreamingPreferences::VDS_FORCE_HARDWARE;
+                const auto availability = getDecoderAvailability(testWindow, selection, format,
+                    m_StreamConfig.width, m_StreamConfig.height, m_StreamConfig.fps);
+                const bool supported = selection == StreamingPreferences::VDS_FORCE_SOFTWARE ?
+                    availability != DecoderAvailability::None : availability == DecoderAvailability::Hardware;
+                if (!supported) {
+                    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                "Skipping 10-bit video format 0x%x: client decoder unavailable", format);
+                }
+                return supported;
+            });
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "10-bit SDR negotiation: %s",
+                    (m_SupportedVideoFormats & VIDEO_FORMAT_MASK_10BIT) ?
+                        "supported by host and client" : "using 8-bit fallback");
     }
 
     if (m_Preferences->enableHdr) {
@@ -1445,6 +1481,18 @@ private:
 void Session::getWindowDimensions(int& x, int& y,
                                   int& width, int& height)
 {
+#ifdef Q_OS_WIN32
+    if (dockParentHandle()) {
+        HWND parent = reinterpret_cast<HWND>(dockParentHandle());
+        RECT area;
+        POINT origin = {};
+        if (GetClientRect(parent, &area) && ClientToScreen(parent, &origin)) {
+            x = origin.x; y = origin.y;
+            width = qMax(1L, area.right); height = qMax(1L, area.bottom);
+            return;
+        }
+    }
+#endif
     int displayIndex = 0;
 
     if (m_Window != nullptr) {
@@ -1631,6 +1679,7 @@ void Session::updateOptimalWindowDisplayMode()
 
 void Session::toggleFullscreen()
 {
+    if (dockParentHandle()) return; // The embedding host controls window geometry.
     bool fullScreen = !(SDL_GetWindowFlags(m_Window) & m_FullScreenFlag);
 
 #if defined(Q_OS_WIN32) || defined(Q_OS_DARWIN)
@@ -1741,6 +1790,7 @@ bool Session::startConnectionAsync()
         http.startApp(m_Computer->currentGameId != 0 ? "resume" : "launch",
                       m_Computer->isNvidiaServerSoftware,
                       m_App.id, &m_StreamConfig,
+                      m_Preferences->enableHdr,
                       enableGameOptimizations,
                       m_Preferences->playAudioOnHost,
                       m_InputHandler->getAttachedGamepadMask(),
@@ -1942,10 +1992,11 @@ void Session::exec()
 
     // We always want a resizable window with High DPI enabled
     Uint32 defaultWindowFlags = SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE;
+    if (dockParentHandle()) defaultWindowFlags |= SDL_WINDOW_HIDDEN;
 
     // If we're starting in windowed mode and the Moonlight GUI is maximized or
     // minimized, match that with the streaming window.
-    if (!m_IsFullScreen && m_QtWindow != nullptr) {
+    if (!dockParentHandle() && !m_IsFullScreen && m_QtWindow != nullptr) {
 #if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
         // Qt 5.10+ can propagate multiple states together
         if (m_QtWindow->windowStates() & Qt::WindowMaximized) {
@@ -2104,7 +2155,39 @@ void Session::exec()
         m_VideoDecoder->notifyWindowChanged(&windowChangeInfo);
     };
 
+#ifdef Q_OS_WIN32
+    if (dockParentHandle()) {
+        SDL_SysWMinfo info = {};
+        SDL_VERSION(&info.version);
+        if (!SDL_GetWindowWMInfo(m_Window, &info) || info.subsystem != SDL_SYSWM_WINDOWS ||
+            !attachDockWindow(info.info.win.window, reinterpret_cast<HWND>(dockParentHandle()), []() -> bool {
+                SDL_Event event = {};
+                event.type = SDL_QUIT;
+                event.quit.timestamp = SDL_GetTicks();
+                if (SDL_PushEvent(&event) != 1) {
+                    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Moonlight Dock: could not queue WM_CLOSE quit: %s", SDL_GetError());
+                    return false;
+                }
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Moonlight Dock: WM_CLOSE queued graceful SDL quit");
+                return true;
+            })) {
+            emit displayLaunchError(tr("Could not attach the stream to its parent window."));
+            goto DispatchDeferredCleanup;
+        }
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Moonlight Dock: attached HWND %p to parent %p before showing",
+                    info.info.win.window, reinterpret_cast<void*>(dockParentHandle()));
+        // Showing through SDL delivers the initial SHOWN event that initializes the decoder.
+        SDL_ShowWindow(m_Window);
+    }
+#endif
     for (;;) {
+        m_InputHandler->pollDockExitHold();
+#ifdef Q_OS_WIN32
+        if (dockParentHandle() && !IsWindow(reinterpret_cast<HWND>(dockParentHandle()))) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Moonlight Dock: parent closed");
+            goto DispatchDeferredCleanup;
+        }
+#endif
 #if SDL_VERSION_ATLEAST(2, 0, 18) && !defined(STEAM_LINK)
         // SDL 2.0.18 has a proper wait event implementation that uses platform
         // support to block on events rather than polling on Windows, macOS, X11,
@@ -2115,7 +2198,7 @@ void Session::exec()
         // NB: This behavior was introduced in SDL 2.0.16, but had a few critical
         // issues that could cause indefinite timeouts, delayed joystick detection,
         // and other problems.
-        if (!SDL_WaitEventTimeout(&event, 1000)) {
+        if (!SDL_WaitEventTimeout(&event, dockParentHandle() ? 50 : 1000)) {
             presence.runCallbacks();
             continue;
         }

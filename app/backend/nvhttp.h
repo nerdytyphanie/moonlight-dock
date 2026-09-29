@@ -120,6 +120,8 @@ public:
     QString
     getServerInfo(NvLogLevel logLevel, bool fastFail = false);
 
+    QString getDirectServerInfo(const QByteArray& certificateSha256);
+
     static
     void
     verifyResponseStatus(QString xml);
@@ -166,6 +168,7 @@ public:
              bool isGfe,
              int appId,
              PSTREAM_CONFIGURATION streamConfig,
+             bool enableHdr,
              bool sops,
              bool localAudio,
              int gamepadMask,
@@ -199,4 +202,5 @@ private:
     QNetworkAccessManager* m_Nam;
     QSslCertificate m_ServerCert;
     bool m_UseTrueUid;
+    QByteArray m_ServerFingerprint;
 };

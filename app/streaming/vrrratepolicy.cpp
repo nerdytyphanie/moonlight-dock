@@ -43,6 +43,12 @@ int VrrRatePolicy::vrrRateForRefresh(int refreshHz)
     return static_cast<int>(numerator / 3600LL);
 }
 
+int VrrRatePolicy::resolveStreamRate(int requestedFps, int refreshHz)
+{
+    const int limit = vrrRateForRefresh(refreshHz);
+    return requestedFps > 0 && limit > 0 ? std::min(requestedFps, limit) : requestedFps;
+}
+
 int VrrRatePolicy::lowLatencyRateForRefresh(int refreshHz)
 {
     if (!isUsableRefreshRate(refreshHz)) {
