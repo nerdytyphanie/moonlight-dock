@@ -121,6 +121,9 @@ public:
     getServerInfo(NvLogLevel logLevel, bool fastFail = false);
 
     QString getDirectServerInfo(const QByteArray& certificateSha256);
+    // Downloads a fixed-size probe from the paired host over pinned HTTPS.
+    // Returns measured Mbps, or throws on an unsupported/failed request.
+    int probePyroWaveDownloadMbps();
 
     static
     void
@@ -172,7 +175,9 @@ public:
              bool sops,
              bool localAudio,
              int gamepadMask,
+             int playStationGamepadMask,
              bool persistGameControllersOnDisconnect,
+             bool clientVrrRequested,
              QString& rtspSessionUrl);
 
     QVector<NvApp>

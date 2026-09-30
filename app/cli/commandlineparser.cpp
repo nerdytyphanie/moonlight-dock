@@ -41,6 +41,7 @@ public:
         setSingleDashWordOptionMode(QCommandLineParser::ParseAsLongOptions);
         addHelpOption();
         addVersionOption();
+        addOption(QCommandLineOption("haptics-license", "Print haptics component notices, licenses and covered source (use alone)."));
     }
 
     void handleHelpAndVersionOptions()
@@ -320,6 +321,7 @@ StreamCommandLineParser::StreamCommandLineParser()
         {"H.264", StreamingPreferences::VCC_FORCE_H264},
         {"HEVC",  StreamingPreferences::VCC_FORCE_HEVC},
         {"AV1", StreamingPreferences::VCC_FORCE_AV1},
+        {"PyroWave", StreamingPreferences::VCC_FORCE_PYROWAVE},
     };
     m_VideoDecoderMap = {
         {"auto",     StreamingPreferences::VDS_AUTO},
@@ -361,7 +363,7 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     parser.addValueOption("resolution", "custom <width>x<height> resolution");
     parser.addToggleOption("vsync", "V-Sync");
     parser.addToggleOption("vrr", "VRR");
-    parser.addToggleOption("vrr-smoothness", "VRR smoothness queue");
+    parser.addToggleOption("vrr-smooth-frame-timing", "VRR frame timing smoothing");
     parser.addValueOption("fps", "FPS");
     parser.addValueOption("bitrate", "bitrate in Kbps");
     parser.addValueOption("packet-size", "video packet size");
@@ -461,10 +463,8 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     // command-line settings.  It must not persist a CLI choice back to the
     // normal settings UI.
     preferences->enableVrr = parser.getToggleOptionValue("vrr", preferences->enableVrr);
-
-    // Resolve --vrr-smoothness and --no-vrr-smoothness options
-    preferences->vrrSmoothness = parser.getToggleOptionValue(
-        "vrr-smoothness", preferences->vrrSmoothness);
+    preferences->smoothVrrFrameTiming = parser.getToggleOptionValue(
+        "vrr-smooth-frame-timing", preferences->smoothVrrFrameTiming);
 
     // Resolve --audio-config option
     if (parser.isSet("audio-config")) {
