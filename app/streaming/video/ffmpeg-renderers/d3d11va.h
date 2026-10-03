@@ -210,6 +210,9 @@ private:
     // MOONLIGHT_VRR_SYNC_FLIPS=1 synchronizes every VRR flip instead of
     // per-frame tearing presents (see presentAdaptive).
     bool m_VrrSyncFlips = false;
+    // MOONLIGHT_VRR_RASTER_WAIT=1 enables flip protection's blocking wait for
+    // the vertical blank before a tearing present (opt-in; see presentAdaptive).
+    bool m_VrrRasterWaitRequested = false;
     // Flip protection's raster wait; disabled for the session if the raster
     // never reports a vertical blank (see presentAdaptive).
     bool m_VrrRasterGuardDisabled = false;

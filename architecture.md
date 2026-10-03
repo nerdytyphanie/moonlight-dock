@@ -539,6 +539,16 @@ them, and the slowness was measured on one driver. A general version would
 first measure latched flip lateness per machine (DXGI's latched flip times are
 reliable) and switch only where latching is slow.
 
+Raster wait opt-in (2026-10-03, Moonlight Dock 6.1.15): the blocking
+vertical-blank wait of the raster flip guard below now runs only with
+`MOONLIGHT_VRR_RASTER_WAIT=1`. On a 4K 116 fps AV1 HDR stream to a VRR panel
+it held each tearing present 12-35 ms, capping rendering at 28-82 fps with
+28-75% of frames dropped by client pacing, against 102 fps (9.3 ms) without it;
+its three-timeout disable never tripped because the blank arrives every
+refresh. Without the variable, flip protection uses the frame-statistics check
+again. The raster source is still opened for every VRR session and
+`MOONLIGHT_VRR_ALIGN=1` sampling is unchanged.
+
 Synchronized DXGI flips (2026-09-28, opt-in): `MOONLIGHT_VRR_SYNC_FLIPS=1`
 makes D3D11 present every VRR frame with `Present(1, 0)`, as Linux's
 Mailbox/FIFO presentation never tears. It was briefly the default and was

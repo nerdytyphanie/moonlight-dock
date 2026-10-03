@@ -2130,6 +2130,9 @@ void D3D11VARenderer::initializeVrrPresentationState(SDL_Window* window,
     const char* syncFlipsEnv = SDL_getenv("MOONLIGHT_VRR_SYNC_FLIPS");
     m_VrrSyncFlips = syncFlipsEnv != nullptr &&
         syncFlipsEnv[0] == '1' && syncFlipsEnv[1] == '\0';
+    const char* rasterWaitEnv = SDL_getenv("MOONLIGHT_VRR_RASTER_WAIT");
+    m_VrrRasterWaitRequested = rasterWaitEnv != nullptr &&
+        rasterWaitEnv[0] == '1' && rasterWaitEnv[1] == '\0';
     m_VrrRasterGuardDisabled = false;
     m_VrrRasterGuardTimeouts = 0;
     SDL_SysWMinfo windowInfo;
@@ -2151,6 +2154,10 @@ void D3D11VARenderer::initializeVrrPresentationState(SDL_Window* window,
     m_VrrPriorFrameStatsRefreshSequence = 0;
 
     if (m_DecoderParams.enableVrr) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "VRR flip protection: vertical-blank wait before tearing presents is %s (MOONLIGHT_VRR_RASTER_WAIT=1 enables it)",
+                    m_VrrRasterWaitRequested ? "enabled" : "disabled");
+
         // Prime the process-wide correlation and display snapshot during
         // renderer setup so the first deeply traced Present does not pay
         // one-time initialization cost on the pacing thread.
@@ -3052,6 +3059,13 @@ VrrPresentFeedback D3D11VARenderer::presentAdaptive(
     // how a given driver implements sync-interval presents. Latch only if the
     // blank does not arrive within two display periods.
     //
+    // The raster wait is opt-in (MOONLIGHT_VRR_RASTER_WAIT=1). On a 4K 116 fps
+    // AV1 HDR stream to a VRR panel it spun 12-35 ms per frame, capping
+    // rendering at 28-82 fps with 28-75% of frames dropped by client pacing,
+    // against 102 fps (9.3 ms) without it. Its three-timeout safety never
+    // tripped because the blank does arrive every refresh. By default the
+    // frame-statistics check below decides instead.
+    //
     // MOONLIGHT_VRR_SYNC_FLIPS=1 skips all of that and synchronizes every flip,
     // as Linux's Mailbox/FIFO presentation does, reporting it as a protection
     // latch so the controller anchors the flip queue. It is opt-in: on the
@@ -3082,7 +3096,8 @@ VrrPresentFeedback D3D11VARenderer::presentAdaptive(
         HRESULT guardResult = S_OK;
         DXGI_FRAME_STATISTICS guardStats = {};
         bool rasterDecided = false;
-        if (m_VrrRasterSourceValid && !m_VrrRasterGuardDisabled) {
+        if (m_VrrRasterWaitRequested && m_VrrRasterSourceValid &&
+                !m_VrrRasterGuardDisabled) {
             const uint64_t limitUs = feedback.flipProtectionQueryStartUs +
                 2 * request.flipProtectionWindowUs;
             for (;;) {
