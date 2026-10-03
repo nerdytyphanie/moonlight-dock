@@ -5,9 +5,11 @@ of a session working on streaming, decoding, rendering, VRR, latency, or replay.
 It explains the implementation and the reasoning needed to investigate it;
 it does not establish that a particular deployed executable matches the source.
 
-Current source review baseline: `b33a8f9a` plus the 2026-09-27 buffer recovery
-and Linux PyroWave completion, graphics-queue, and coalesced coefficient-store
-changes in this worktree. Deployment and live
+Current source review baseline: `9b7fa143` plus customizable VRR timing
+settings (2026-10-01), plus the 2026-09-30 Reduce judder
+readiness-bound and interval-buffer attribution changes, plus the 2026-10-01
+above-target shrinkage correction and per-interval excess scoring in this
+worktree. Deployment and live
 smoothness must be verified separately from this source description.
 
 The first live Windows PyroWave retry negotiated H.264 because the common library
@@ -38,6 +40,42 @@ the `PyroWave` codec choice negotiates Themaister's intra-only wavelet codec
 `PyroWaveFraming`, pushes the wavelet packets and decodes on Vulkan. An eligible
 partial frame can render with missing detail as blur; a rejected frame is dropped
 without an IDR request because the next frame is independent.
+
+PyroWave independent compression (2026-09-30, reviewed over `1ad5848b` plus
+this worktree): Settings > Video codec > PyroWave exposes PyroWave compression.
+Both endpoints advertise/negotiate compression version 1 and feature `0x8`;
+unsupported hosts use ordinary transport with a launch warning. The abandoned
+Hybrid preference migrates to the new setting, but its `0x4` feature, frame-reference
+wire format and ACK control path are removed.
+
+The host still encodes a complete intra frame, preserves its raw coarse-data prefix,
+and packs detail into independent groups of at most 64 KiB using fast LZ4. A 4 KiB
+sample avoids full passes on high-entropy groups. Incompressible groups use native
+records; if repacking erases the gain, the original framed bytes are sent unchanged.
+Compression failures also send the native frame, including native framing's
+unpadded fallback at the transport ceiling where there is no protected prefix.
+No temporal comparison, XOR residual, reference cache, frame identity or ACK remains.
+Deterministic sign/alignment padding stays because it improves compression entropy.
+
+A compressed group has a 16-byte size/CRC32C header, begins on an RTP shard
+boundary, and expands to native detail records before GPU submission. The framing
+parser owns reusable expanded storage; each span identifies the original wire or
+that storage. It validates geometry, sequence, detail-only records, exact LZ4 output
+size and CRC before the ordinary clear-per-frame GPU decode. Packet loss skips only
+affected groups, with record-start flags allowing recovery after a lost header.
+An intact coarse prefix still displays a partial frame; one lost shard can remove
+up to 64 KiB of detail. Intact output preserves every native coefficient exactly.
+Critical FEC is unchanged; optional detail FEC observes native records before
+compression and protects the resulting wire shards.
+
+The 2026-09-30 frozen session delivered 1,884 partial frames and rejected 1,867 in
+the old Hybrid path, producing zero rendering FPS. An active receive-side 1 Gbps
+IFB test on the Deck's 2.5 Gbps NIC had cumulative drops; this is packet-delivery
+loss and exposes Hybrid's whole-frame requirement. The replacement's regression
+covers sustained detail loss and subsequent complete restoration. Neither those
+tests nor a modeled wire benchmark establish live streaming smoothness.
+The shared contract is in `pyrowave/compression/README.md` and
+[docs/pyrowave-protocol.md](docs/pyrowave-protocol.md).
 
 PyroWave partial-frame delivery (2026-09-26, `afd4aebb` plus the receive fix):
 the RTP queue previously held an incomplete final block until the next frame
@@ -267,7 +305,8 @@ add three events to the independent GPU CSV, without changing replay or pacing.
 `pyrowave_phases` uses `a..e` for CPU wall microseconds spent parsing,
 pushing/validating packets, acquiring/allocating output, submitting decode (or
 synchronous readback), and releasing/referencing output. Its object field is
-decode success; failed calls retain the phase in which they failed. These
+decode success; failed calls retain the phase in which they failed. With compression
+the parsing phase also includes CPU group validation/decompression. These
 durations include any resource-reuse waits and are not GPU execution times.
 `pyrowave_context_wait.a` isolates the CPU wall time inside Granite's
 `next_frame_context()` from the larger submit phase. This advances one of two
@@ -275,7 +314,9 @@ codec frame contexts and can wait for previously submitted GPU work; the
 timing is zero on non-shared/readback paths.
 `pyrowave_payload` records framed bytes in object, and surviving payload bytes,
 received block records, announced blocks, stripped padding bytes and partial
-status in `a..e`. At teardown, a decoder that recorded phase diagnostics logs
+status in `a..e`. With compression object is the received wire size, while
+payload/blocks describe surviving native records after group expansion. At teardown, a decoder
+that recorded phase diagnostics logs
 the codec's existing GPU history, including Dequant and iDWT durations per codec
 frame context, before imported-image teardown advances extra contexts. Those
 are aggregated delayed GPU query results, not per-frame completion timestamps.
@@ -413,7 +454,8 @@ later that day; see Profile consistency below). Replay
 p99 13.7 ms, zero modelled interval violations) and `latency-presets-stress.json`
 passes in `vrrqueuesim`.
 
-Profile consistency (2026-09-26, over `41312909`): the latency profiles are one
+Historical profile consistency (2026-09-26, over `41312909`; superseded by
+the customizable settings below): the latency profiles are one
 dial. Low Latency, Balanced Target and Smooth differ in their on-time target,
 source-frame allowance, hold and release, with each trade ordered the same
 way; all wait in the same four-frame queue.
@@ -675,15 +717,42 @@ fence-value-verified Windows readiness waits, bounded Vulkan source retirement,
 bounded GPU-readiness head-start adaptation, and cadence-gated,
 elapsed-time source-offset recovery. The latency
 presets and persistent Vulkan presentation changes remain active.
-Windows and Linux share one production queue policy: mean absolute client-added
-interval error over one second with a profile-selected tolerance (0.5 ms for Low
-Latency and Balanced Target, 0.2 ms for Smooth), driving the severity-weighted
-preset-duration quality score. Low Latency / Balanced Target / Smooth seek
-99% / 99.5% / 99.99% over 1/2/5 minutes, with 6/8/10-second holds and
-250/250/50 us-per-second release, within the shared four-waiting-frame queue and
-1/2/4-source-frame allowances. Fixed 16/24 ms profile ceilings were removed;
-all modes remain subject to the queue-capacity safety bound. These
-are ceilings, not fixed delays or a larger physical queue.
+Windows and Linux share one production queue policy: absolute client-added
+interval error drives a severity-weighted quality score. The boxed VRR timing
+settings expose four independent values. Presets only fill in those values:
+
+| Preset | Source-frame allowance | Quality target | History | Interval tolerance |
+| --- | --- | --- | --- | --- |
+| Low Latency | 0.5 | 99% | 60 seconds | 0.5 ms |
+| Balanced | 1 | 99.5% | 120 seconds | 0.5 ms |
+| Smooth | 4 | 99.99% | 300 seconds | 0.25 ms |
+
+Custom bounds are 0.25–4 source frames, 90–99.99%, 10–300 seconds, and
+0.25–2 ms tolerance in 0.25 ms steps. Higher tolerance accepts more interval
+variation before counting a quality miss; it does not relax native submission
+spacing or scanout safety. The score is a controller goal, not a guarantee of
+physical display smoothness. All settings share an eight-second clean hold,
+250 us/s release and all-rate admission policy. Old mode-dependent hold/release
+and the implicit 0.2 ms Smooth tolerance remain only in historical parameter
+snapshots. The queue still has four waiting slots; its capacity independently
+limits delay, so an allowance is a ceiling rather than a fixed delay.
+
+`VrrTimingOptions` defines defaults and bounds. Missing saved values migrate
+from the saved preset; invalid persisted values are bounded before use. The
+session snapshots all four values and carries them through decoder recreation
+to the pacer. Calibration identity uses actual values rather than the last
+preset name. The first three map to existing trace parameters; the new
+`playout_interval_tolerance_us` records tolerance explicitly. Its zero default
+preserves historical tolerance selection for old traces. Session-policy replay
+restores all four recorded values for customizable captures. Exact replay always
+uses the full captured parameter snapshot.
+
+The timing controls support gamepad Tab/Shift-Tab focus navigation and left/right
+adjustment, including when a numeric text field has focus. Preset and PyroWave
+calibration-host popups use `AutoResizingComboBox`, switching the gamepad to
+arrow/Return navigation while open and restoring UI navigation on close.
+Reconnect after changing timing values.
+
 Initial interval calibration requires at least 500 ms of contiguous coverage
 and 32 valid intervals. Ordinary growth remains at most 250 us per 250 ms,
 applied at most 125 us per frame. Once qualified, a sequence break requires the
@@ -836,6 +905,45 @@ Exploratory replay of the 15-capture corpus, which cannot model frame shedding:
   23.8 to 19.0 ms, with presented jerk over 2 ms +1 per mille.
 - Two Balanced 2026-09-26 captures gained 0.3-0.7 ms p50 at +3 to +4 per mille.
 - The remaining captures were unchanged.
+
+### Reduce judder readiness bound and buffer attribution (2026-09-30)
+
+Production interval-buffer sessions with Reduce judder enable
+`playout_smoothing_readiness_bound=1`. Its zero schema default preserves the
+old smoother and buffer attribution for captures that lack the field.
+
+Early retiming may use only the current frame's known decode-readiness slack:
+the total smoothing adjustment cannot fall below
+`min(0, readyOffset - delayBeforeThisFrame)`. This retains the raw target's
+typical-render allowance. The existing execution clamp still handles worker
+backlog and later preparation variance. The smoother's next clock basis and
+its readiness-reserve observations use the requested, unconstrained retiming;
+feeding a readiness-clipped target back into that clock propagates a single
+late frame and spoils ordinary host-quantized cadence.
+
+The interval observer's readiness deadline is the later of the raw and applied
+smoothed targets. A frame ready before its raw deadline can therefore neither
+grow the standing playout buffer nor renew its clean-time hold merely because
+Reduce judder attempted an earlier slot. Genuine raw-readiness misses still
+grow protection under the existing interval-quality, capacity and service gates.
+Smoothing's own reserve remains separately bounded to 3 ms. A lower source rate
+supplies processing/spacing capacity; it does not guarantee that every frame is
+ready a fixed number of milliseconds before its timestamp-playout deadline.
+
+The deterministic 120-to-30 FPS fixture learns the heavier 9 ms preparation cost
+before adding alternating 21/45 ms sender intervals and 4 ms readiness variation.
+With release frozen to isolate growth, all noisy frames are ready before their
+raw targets. Smooth previously made 60 smoothing-only growth decisions, raising
+8 ms to 9.278 ms; the corrected policy keeps 8 ms with zero growth. With normal
+release enabled, delay drains to 5.789 ms instead of remaining at 9.274 ms;
+genuine raw misses as delay drains still retain protection. Separate
+late-readiness variants retain growth in all three presets. This is controller
+evidence, not a measured live improvement.
+The newest completed local capture, `20260930-213542-1353491`, stays near 95 FPS
+and does not contain the reported slowdown. Its controller decisions reproduce,
+but the full exact replay gate fails; it cannot establish strict live A/B results.
+The smoothing calibration identity includes this bound to avoid seeding the new
+policy from a delay acquired under the old attribution.
 
 ### Reduce judder readiness reserve and wider retiming (2026-09-22)
 
@@ -999,22 +1107,57 @@ suites, exact replay of a new capture and a matched high-bitrate live test.
 
 ### Client warnings and gradual backlog recovery (2026-09-20)
 
-With Reduce judder enabled, production captures `playout_catchup_per_mille=20`.
-Recovery arms only after replaceable queue age exceeds one source period.
-A soft submission floor limits catch-up initially to a two-percent reduction
-in source interval. Between one and two source periods of replaceable queue
-age, it continuously allows more recovery, up to the display period plus guard.
-There is no extra floor without display headroom. The existing native
-protection decision is retained, including any latched present. Each added
-hold is bounded by the two-period stale deadline and at most 1 ms beyond the
-otherwise safe slot. Persistent stalls cannot authorize an unlimited slow drain. Source timestamps, dynamic reserve demand and
-hard queue capacity are unchanged. The decode wait is excluded from replaceable
-queue age; existing stale-frame rejection remains the last safeguard. Cadence
-breaks, rate transitions and unqualified source timing bypass this floor.
-The recovery parameter is included in the calibration identity. Zero preserves historical
-capture behavior; Reduce judder disabled also retains the former recovery.
-This smooths compression after stalls, but cannot guarantee preservation of every
-frame under overload, eliminate GPU waits, or prove physical scanout smoothness.
+Production captures `playout_late_recovery=1` and
+`playout_catchup_per_mille=20`, independently of Reduce judder. Recovery arms
+when a successfully submitted frame exceeds its original target by more than
+500 us, or replaceable queue age exceeds one source period. This also covers
+preparation/submission stalls that happen after scheduling without queued
+backlog. Failed/cancelled presentations do not arm recovery. Qualified source
+intervals within 10 percent of the fitted period are required; cadence breaks,
+rate transitions and unqualified timing bypass the floor.
+
+A soft submission floor initially limits catch-up to a two-percent reduction
+in source interval. Replaceable queue pressure progressively permits faster
+recovery up to the display period plus guard. Intentional playout delay is
+subtracted from that pressure. With no display headroom, the soft floor is
+inactive and existing native protection still applies. Recovery never changes
+the present mode or removes a latched request. Each additional hold is bounded
+by both `max(2 source periods, applied buffer + 1 source period)` of frame age
+(excluding its explicit decode wait) and `min(4 ms, half a source period)`
+beyond the otherwise safe target. This is temporary recovery time, separate
+from the half-frame Low Latency adaptive-buffer cap and the independently
+selected Reduce judder retiming budget. The original source targets remain
+anchored so an isolated late frame does not permanently move the timeline.
+
+New sessions no longer discard a frame merely because the presentation floor
+pushes it more than half a source period. Queue capacity, early queue expiry,
+and pre-render age rejection still shed sustained overload when a successor
+exists; a lone late frame and completed offscreen work remain protected.
+The worker and queue simulator select this rule through the recorded recovery
+parameter. The simulator still cannot model early queue pruning or changed
+GPU/decode service, so it is not live-throughput proof.
+
+Historical snapshots default `playout_late_recovery` to zero, retaining
+queue-age-only arming, the old 1 ms catch-up hold, and floor-debt rejection.
+The new parameter and preset buffer ratio are included in calibration identity.
+No application repeats, VRR enable/disable transitions, swapchain mode changes,
+or physical OLED flicker correction are introduced. This can reduce avoidable
+submission-interval compression; physical refresh behavior and brightness
+stability require a fresh live display test.
+
+Validation on the Linux native build: ten deterministic suites and replay help
+pass; single-frame, warm-history, decode-contention, and early-expiry worker
+fixtures pass exact replay. The 15 scenarios in
+`tests/vrr/configs/late-frame-recovery-stress.json` cover all presets with
+nominal, decision, preparation, submission, and scheduler faults on the 60 FPS
+warm fixture; all pass interval safety and 30 ms p99 latency bounds without
+saturation. Application build and offscreen help pass. The latest completed
+`20261001-222806-2037694` capture has valid sequence accounting but fails the
+strict exact gate, so its policy comparison is exploratory only: half-frame
+recovery improves interval jerk versus half-frame buffering alone, while the
+previous one-frame buffer remains more even. No native Windows deployment,
+live gameplay smoothness, or optical flicker result is established. Detailed
+checks and capture identity are in `build/late-frame-recovery/validation.json`.
 
 Client warnings sample fresh pacing drops/late-preparation counters once per
 reporting interval, independently of the performance overlay. A buffer at its
@@ -1029,7 +1172,7 @@ a thirty-second repeat cooldown. Reporting gaps over 2.5 seconds restart
 qualification. They follow the existing connection-quality-warning preference.
 HEVC is suggested only for active AV1 with an initialization-time hardware
 HEVC probe matching the stream's HDR/chroma/resolution; Smooth is suggested
-only for a capped buffer when a different preset is selected. No setting changes
+only for a capped buffer when its configured allowance is below four frames. No setting changes
 automatically. Diagnostic `serviceOverloaded` does not change buffer control.
 
 Network and client messages retain independent status sources. Mouse-mode text
@@ -1064,7 +1207,7 @@ interval time over the same one-second window as interval pressure.
 Extra standing delay cannot make a pipeline whose serial work exceeds its slot
 process frames faster. The preset's long severity-weighted history remains part
 of quality reporting and attack qualification, while only recent current pressure
-renews the clean-time release hold. Old below-target score debt therefore no
+with a below-target long score renews the clean-time release hold. Old below-target score debt therefore no
 longer pins live delay after the recent disturbance ends; historical policies
 retain the former hold behavior.
 
@@ -1345,7 +1488,7 @@ the shared-device/copy path against the separate-device/bind path.
 
 ### Production interval-quality queue (promoted from V2)
 
-Every normal VRR session now selects revision 7 without an A/B setting. The queue
+Every normal VRR session now selects revision 9 without an A/B setting. The queue
 uses 0.5 ms tolerance for Low Latency and Balanced Target and 0.2 ms for Smooth;
 explicit revision 8 retains its 250 us tolerance for historical replay. Preset
 targets and severity weighting remain active.
@@ -1360,12 +1503,14 @@ are removed before scoring. Submission boundaries are a display-timing proxy,
 not optical scanout confirmation. Discontinuous/missing frames break the pair;
 their drops remain separately visible.
 
-The controller and overlay share one one-second average (10 ms buckets). After
+The controller and overlay share a diagnostic one-second average (10 ms buckets). After
 initial qualification (500 ms and 32 intervals), or one-second requalification
-following a later sequence break, mean error through the selected profile tolerance
+following a later sequence break, interval error through the selected profile tolerance
 is accepted (0.5 ms for Low Latency/Balanced Target, 0.2 ms for Smooth). For each
-evaluated interval, revision 7 computes
-`loss = clamp(max(meanErrorUs - toleranceUs, 0) / intendedIntervalUs, 0, 1)`.
+evaluated interval, revision 9 computes
+`loss = clamp(max(intervalErrorUs - toleranceUs, 0) / intendedIntervalUs, 0, 1)`.
+Revisions 7/8 instead use `meanErrorUs`, retaining their captured scoring and
+growth behavior for historical replay.
 The shared score is `100 * (1 - sum(actualIntervalUs * loss) / sum(actualIntervalUs))`
 over the selected preset's one/two/five-minute history, using 100 ms buckets.
 Loss retains fractional microseconds rather than rounding every frame. Missing
@@ -1376,10 +1521,10 @@ The same calculation serves all presets and both controller and overlay.
 
 Low Latency / Balanced Target / Smooth seek 99% / 99.5% / 99.99%, respectively,
 over one / two / five minutes.
-An attack requires the preset-duration score below its target, current one-second loss
+An attack requires the preset-duration score below its target, current interval loss
 above the preset's allowed loss, and a fresh interval error over the selected
 tolerance with
-readiness-attributable lateness. It acquires only the current mean excess above
+readiness-attributable lateness. It acquires only the current interval excess above
 the preset allowance (`(1 - target) * intendedIntervalUs`), bounded by fresh
 error above tolerance, the affected frame's lateness, 250 us per 250 ms, and
 125 us applied per frame. The attributed frame must also be absorbable: its
@@ -1392,8 +1537,16 @@ source period is always the available slot. Old score debt alone cannot authoriz
 buffer growth, and work that cannot fit a slot cannot be repaired by adding
 standing delay.
 
-Current above-target loss renews the protection hold and clears fractional
-release credit. The long score still qualifies a future attack and remains the
+Current attributable pressure renews the protection hold and clears fractional
+release credit only while the preset-duration quality score is below its target.
+Production records `playout_hold_renew_below_target=3`: score changes in either
+direction at or above the target neither restart the hold nor pause qualified
+recovery or gradual release. An above-target capacity dip pauses earning
+recovery and release while service cannot fit, but preserves earned recovery
+instead of restarting the timer. Revision 2 retained that capacity-reset
+behavior; revision 3 removes it above target. Revision 1 avoided hold renewal above target but
+still paused recovery; revision 0 retains its earlier pressure-based hold.
+Captured values preserve historical behaviors for exact replay. The long score still qualifies a future attack and remains the
 reported preset-quality history, but an old below-target score does not renew the
 live release hold after recent pressure clears. Smooth requires ten clean
 seconds before release (increased from six after the latest gameplay report),
@@ -1597,7 +1750,7 @@ spacing, but cannot model a change of native backend or prove a visual remedy.
 A fresh gameplay capture is required for that comparison.
 
 Current VRR timing choices (introduced after `20fa2bc4`, allowances updated
-2026-09-18): the `VRR timing`
+2026-10-01): the `VRR timing`
 selector offers Low Latency, Balanced Target, and Smooth throughout the VRR
 frame-rate range. `vrrlatencymode` persists IDs 2, 1, and 0 respectively.
 Balanced Target is the new-user default. A saved mode takes precedence;
@@ -1608,11 +1761,11 @@ reconnect after changing it. Fixed-refresh pacing is independent of this setting
 
 | Timing choice | Adaptive playout-buffer cap | Stale-work allowance with a successor |
 | --- | --- | --- |
-| Low Latency (2) | One fitted source period | At least two periods; protected by applied delay |
+| Low Latency (2) | Half a fitted source period | At least two periods; protected by applied delay |
 | Balanced Target (1, default) | Two fitted source periods | At least two periods; protected by applied delay |
 | Smooth (0) | Four fitted source periods | At least two periods; protected by applied delay |
 
-Production sets `playout_delay_maximum_period_per_mille=1000/2000/4000`
+Production sets `playout_delay_maximum_period_per_mille=500/2000/4000`
 for Low Latency/Balanced/Smooth. The separate four-slot queue safety bound
 uses the smaller of fitted and negotiated source periods, so a slower source
 can still be clipped below its nominal profile allowance. Queue-only and
@@ -1637,7 +1790,7 @@ profile allowance, but the queue bound still uses the negotiated period and
 may prevent an increase in effective buffer maximum. The zero default retains the configured
 stream-rate cap for historical replay. `VrrSessionConfig::latencyMode` resolves
 the buffer cap into the trace/replay parameter
-`playout_delay_cap_source_period_per_mille`: 1000 for Low Latency, 2000 for
+`playout_delay_cap_source_period_per_mille`: 500 for Low Latency, 2000 for
 Balanced Target, and 4000 for Smooth. Earlier captures retain their recorded
 ratios (including vrr17's 500/1000/3000). A zero schema default means an older
 capture has no source-relative cap and retains its recorded behavior. The
@@ -2066,7 +2219,7 @@ contract; it does not replace network assembly or codec reference handling.
 The VRR queue admits four waiting frames plus one active frame in every
 profile (`playout_queue_frames`; Smooth alone until 2026-09-26, and 0 = the
 historical three in older captures). Separately, profile playout-delay
-allowances are one, two, or four fitted source frames for Low Latency, Balanced
+allowances are half, two, or four fitted source frames for Low Latency, Balanced
 Target, or Smooth. The queue limit in `playoutQueueLimitUs()` remains a safety
 bound on those allowances:
 waiting frames x period, minus render lead and the full Reduce judder retiming
@@ -2088,7 +2241,8 @@ reject frames; a full queue evicts the oldest waiting frame, marks a discontinui
 and admits the new frame. Trace/counter work occurs outside the queue lock.
 
 The worker also sheds stale work when a fresher queued successor exists and
-age/backlog/missed-tick criteria apply. All non-metronome profiles use a
+age/capacity criteria apply (historical snapshots also retain floor-debt
+and missed-tick rejection). All non-metronome profiles use a
 two-source-period age allowance. Balanced Target and Low Latency measure it from
 pacer admission, while Smooth uses the scheduled target for its second
 check. A lone late frame may still be shown.
@@ -2267,7 +2421,7 @@ timing parameters. Exact replay uses captured parameters, independent of whether
 the recording was enabled through Settings or an external launcher.
 
 The resolver enables timestamp playout, shared readiness history and adaptive
-delay. Both Linux and Windows use the revision-7 interval policy: client-added
+delay. Both Linux and Windows use the revision-9 interval policy: client-added
 submission-interval error triggers growth only with attributable late work that
 can fit its intended interval. The older thresholded-event policy is disabled
 with `playout_readiness_hitch_threshold_us=0`. Native-hitch adaptation is disabled.
@@ -2281,7 +2435,7 @@ zero initializer values preserve historical replay when captures omit them.
 The latency presets set independent caps; per-frame native slot protection
 remains enabled.
 Display smoothness feedback remains diagnostic. Historical Linux thresholded
-submission-error attribution is retained for replay; live revision 7 uses the
+submission-error attribution is retained for replay; live revision 9 uses the
 shared interval policy described above.
 Historical feedback policies remain selectable for exact replay.
 It disables the retired metronome and enables preparation on arrival.
@@ -2291,9 +2445,9 @@ It also sets `latchedFloorDisabled=1` and disables the extra queue-mode budget.
 | --- | --- |
 | Delay start seed | 6,000 us, then source/display/work/capacity scaling below |
 | Delay minimum input | 1,000 us, capped by available capacity and the selected timing allowance |
-| Delay maximum input | 1,000 us fixed floor plus 1/2/4 fitted source periods for Low Latency/Balanced/Smooth; also capped by queue capacity |
+| Delay maximum input | 1,000 us fixed floor plus 0.5/2/4 fitted source periods for Low Latency/Balanced/Smooth; also capped by queue capacity |
 | Start-period ratio | 950 per mille of fitted source period |
-| Maximum-period ratio | 1000/2000/4000 per mille for Low Latency/Balanced/Smooth |
+| Maximum-period ratio | 500/2000/4000 per mille for Low Latency/Balanced/Smooth |
 | Initial interval calibration | At least 500 ms and 32 consecutive valid intervals; once per controller reset, not once per FPS change |
 | Interval requalification after a break | One second and at least two valid intervals, after initial calibration has completed |
 | Production source mapping | Decode completion (`playout_source_mapping_decoder_output=0`); absorbs hardware decode duration into the timeline offset |
@@ -2308,6 +2462,7 @@ It also sets `latchedFloorDisabled=1` and disables the extra queue-mode budget.
 | Smoothing period EMA | 25 per mille with fractional carry, plus 20,000 per million phase-error feedback; active only with smoothing enabled |
 | Positive smoothing lag cap | 6,000 us, shared with the readiness reserve; active only with smoothing enabled |
 | Smoothing readiness reserve | p98 of the last 128 smoother-caused shortfalls minus 500 us, at most 3,000 us, +250 us per frame, released at 500 us/s; zero when unchecked |
+| Smoothing readiness bound | Enabled with Reduce judder; early retiming preserves known decode readiness and the raw target's typical render allowance; smoothing-only misses cannot grow or renew the interval buffer |
 | Render lead floor | 3,000 us |
 | Preparation start | Use the existing playout interval (`playout_prepare_on_arrival=1`), with no additional post-submission delay |
 | Minimum preparation lead input | 2,500 us |
@@ -2390,6 +2545,12 @@ adjustment     = clamp(adjustment, -(delayBeforeThisFrame + R), 6000 us - R)
 smoothedBasis  = raw + R + adjustment         # cadence_smoothing_us = R + adjustment
 ```
 
+With the production readiness bound, `adjustment` above is the requested
+smoother adjustment. Its clock basis retains that request, while the applied
+total adjustment is bounded below by `min(0, readyOffset - delayBeforeThisFrame)`.
+Reserve learning also retains the request, so this per-frame bound does not
+erase the shortfall the bounded smoothing reserve is intended to cover.
+
 `R` is applied to every timestamp-playout frame while smoothing is enabled,
 including frames the smoother cannot currently place, so a cadence reset does
 not step the schedule by `R`. It is learned only from frames the smoother
@@ -2415,7 +2576,8 @@ presentation floors still constrain the schedule. Smoothing does not add a
 queued-frame allowance. Its readiness calibration key gains
 `|frame-smoothing=150-25-6000|cadence=2-0|catchup=20|smoothing-reserve=3000-500-980-500|period-feedback=20000`
 so profiles from earlier smoothing policies cannot cross-seed it.
-Unchecked sessions keep their existing calibration identity. Historical traces
+All new sessions also append the late-recovery revision and preset buffer
+ratio to their calibration identity. Historical traces
 retain their recorded parameters and need no schema change.
 
 The initial moderate policy was selected by exploratory replay of the completed
@@ -2678,10 +2840,21 @@ legacy/replay behavior. In that branch 1000 per mille means p100, 999 means
 p99.9, and 995 means p99.5. Those values must not be confused with the active
 Reserve p99.95 implementation.
 
-Production sets `playout_prediction_only=1` and `playout_responsive_buffer=7`
+Production sets `playout_prediction_only=1` and `playout_responsive_buffer=9`
 for every normal VRR session. The interval-quality observer described above owns
 requested delay, with 125 us per-frame attack application and preset-timed
-release. It bypasses the following historical percentile growth/release law.
+release. Revision 9 scores each interval as
+`min(1, max(abs(actualInterval - intendedInterval) - tolerance, 0) / intendedInterval)`
+and averages that fractional loss over evaluated time in the preset's history
+window. The one-second mean remains diagnostic. Fresh per-interval excess and
+below-target history authorize growth only with eligible, absorbable late
+readiness; the 250 us request step and 250 ms cooldown remain unchanged.
+Revisions 7/8 retain their mean-before-tolerance scoring for exact replay.
+With `playout_smoothing_readiness_bound=1`, its readiness attribution
+uses the later of the raw and smoothed targets, excluding misses caused solely
+by advancing an otherwise on-time frame. The same attribution governs hold
+renewal, allowing clean recovery instead of retaining smoothing-induced delay.
+It bypasses the following historical percentile growth/release law.
 The retired revision-4 estimator keeps 100 ms buckets over the selected preset's learning
 window, including successes. Lowest latency uses 99% over 30 seconds, Balanced
 99.5% over 60 seconds, and Smoothest 99.95% over 120 seconds. These are
@@ -2756,8 +2929,8 @@ occupied        = renderLead + presentationSafety
 queueDelayLimit = max(0, capacity - occupied)
 modeAllowance   = Smooth: fittedSourcePeriod * 4000 / 1000
                 | Balanced Target: fittedSourcePeriod * 2000 / 1000
-                | Low Latency: fittedSourcePeriod * 1000 / 1000
-maximumInput    = max(1000 us, selected 1/2/4 fitted source-period allowance)
+                | Low Latency: fittedSourcePeriod * 500 / 1000
+maximumInput    = max(1000 us, selected 0.5/2/4 fitted source-period allowance)
 effectiveMin    = min(1000 us, queueDelayLimit, modeAllowance)
 effectiveMax    = min(maximumInput, queueDelayLimit, modeAllowance)
 ```
@@ -3152,7 +3325,7 @@ queued audio latency. Muting can suppress audio processing without retiming VRR.
 
 Input goes from SDL handlers to common-library input APIs and a separate sender.
 
-Windows/Linux DualSense waveform feedback (updated 2026-09-19) runs separately
+Windows/Linux DualSense waveform feedback (updated 2026-10-02) runs separately
 from video and ordinary stream audio. A Bluetooth Sony DualSense/Edge with an
 exact SDL HID device path can advertise controller capability
 `LI_CCAP_HAPTICS_PCM` (`0x8000`) after its output backend opens successfully.
@@ -3175,18 +3348,30 @@ Output is padded to the descriptor's maximum report length while preserving the
 wait; timeout cancels and drains the operation before its buffer can be reused
 or freed. This is not a hard bound on a faulty driver's cancellation completion.
 Input stays with SDL; no kernel module or Bluetooth reconfiguration is added on
-the client. USB and other platforms keep ordinary rumble. Native game haptics
+the client. Windows USB additionally matches the exact SDL Sony USB controller's
+HID device container to its active four-channel WASAPI render endpoint. The
+worker submits 48 kHz float samples to actuator channels 3/4 while keeping
+channels 1/2 silent; endpoints whose mix format is not four channels are rejected.
+Shared-mode conversion uses the endpoint's channel mask. Startup buffers 10 ms
+(or waits at most 10 ms); the software FIFO is capped at 40 ms, separately from
+the requested 20 ms engine buffer. The actual engine buffer size is queried.
+Idle output drains to silence, and disconnect joins the worker before SDL closes
+the controller. Linux USB and other platforms keep ordinary rumble. Native game
+haptics
 must originate from the Linux Vibeshine host's controller
 audio endpoint; game soundtrack audio is not a substitute.
 
-Playback drops old/duplicate packets, resets conversion history on packet loss,
+Bluetooth playback drops old/duplicate packets, resets conversion history on
+packet loss,
 bounds its input and converted queues, sends silence on underflow/idle/removal,
 and joins its worker before SDL closes the controller. It cancels SDL emulated
 rumble when waveform playback starts and suppresses legacy rumble while active;
 LED, motion and adaptive-trigger callbacks retain their own paths. Write failure
 stops that waveform worker and logs the need to reconnect; ordinary controller
 input continues. Hardware coexistence with other applications writing the same
-controller still requires physical testing.
+controller still requires physical testing. The USB backend has not been validated
+on Windows hardware; Linux deterministic tests cover the shared input queue and
+existing Bluetooth worker, not WASAPI endpoint discovery or physical output.
 
 Adaptive triggers already use `SDL_GameControllerSendEffect` on Windows and
 Linux, independently of PCM support. SDL owns Bluetooth framing/CRC. The shared
@@ -3415,9 +3600,13 @@ available outcomes before 30 seconds have elapsed. This remains a readiness
 measurement, not a visible-smoothness score. With no eligible frames, the line
 shows the starting state. Revision 4 applies the same thresholded-miss policy to
 this score: through 1 ms is on time, 1-2 ms counts only above 50% prevalence,
-and over 2 ms or a drop always counts. Production revision 7 instead reports
+and over 2 ms or a drop always counts. Production revision 9 instead reports
 the interval buffer's one-second mean error and severity-weighted quality over
 the preset's history window; these are not that older readiness percentage.
+Tolerance is applied to each interval before time-weighted averaging, so
+isolated excess cannot disappear beneath a clean one-second mean. The score
+still measures severity, rather than the share of frames inside tolerance;
+unobserved sequence gaps remain excluded and drops are reported separately.
 
 With deep tracing off, the overview retains the VRR17 frame queue delay,
 rendering time, incoming host smoothness, VRR pacing/smoothness target, and
@@ -3488,7 +3677,7 @@ and does not exclude long local arrival gaps when RTP is steady. The older
 including their sender/arrival exclusions, for comparison.
 
 These replay spacing fields use submission timing as a presentation proxy.
-Current revision 7 uses submission-interval error with readiness attribution to
+Current revision 9 uses submission-interval error with readiness attribution to
 control padding; native confirmation remains diagnostic. Historical prediction-
 only policies instead derive padding from readiness prediction.
 Report `smoothness_feedback.native_window_samples` and `native_window_misses`

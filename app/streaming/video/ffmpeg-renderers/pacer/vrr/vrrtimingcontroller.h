@@ -45,6 +45,9 @@
     X(uint64_t, playout_recent_pressure_release, playoutRecentPressureRelease, 0) \
     /* Zero preserves historical burst recovery. Production starts at 2 percent. */ \
     X(uint64_t, playout_catchup_per_mille, playoutCatchupPerMille, 0) \
+    /* Rescue bounded late frames and recover from actual submission lateness. */ \
+    X(uint64_t, playout_late_recovery, playoutLateRecovery, 0) \
+    X(uint64_t, playout_interval_tolerance_us, playoutIntervalToleranceUs, 0) \
     /* Historical captures retain the one-second/two-interval warmup. */ \
     X(uint64_t, playout_interval_initial_warmup_us, playoutIntervalInitialWarmupUs, 1000000) \
     X(size_t, playout_interval_initial_minimum_samples, playoutIntervalInitialMinimumSamples, 2) \
@@ -221,7 +224,8 @@
     X(uint64_t, playout_epoch_rate_ratio_per_mille, playoutEpochRateRatioPerMille, 0) \
     X(uint64_t, playout_epoch_sustain_us, playoutEpochSustainUs, 0) \
     X(uint64_t, playout_delay_decrease_slew_us, playoutDelayDecreaseSlewUs, 0) \
-    X(uint64_t, playout_epoch_confirm_us, playoutEpochConfirmUs, 0)
+    X(uint64_t, playout_epoch_confirm_us, playoutEpochConfirmUs, 0) \
+    X(uint64_t, playout_smoothing_readiness_bound, playoutSmoothingReadinessBound, 0)
 
 // Every value that changes VRR policy remains replaceable by replay without
 // rebuilding the controller. Production callers use these defaults.

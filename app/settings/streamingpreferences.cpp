@@ -39,6 +39,7 @@
 #define SER_MULTICONT "multicontroller"
 #define SER_AUDIOCFG "audiocfg"
 #define SER_VIDEOCFG "videocfg"
+#define SER_PYROWAVECOMPRESSION "pyrowavecompression"
 #define SER_HDR "hdr"
 #define SER_YUV444 "yuv444"
 #define SER_VIDEODEC "videodec"
@@ -161,6 +162,12 @@ void StreamingPreferences::reload()
         // Preserve the old checkbox choice while new users start on Balanced Target.
         vrrLatencyMode = settings.value(SER_VRRLATENCYFIX).toBool() ? VLM_BALANCED_TARGET : VLM_SMOOTH;
     }
+    m_VrrTimingOptions = VrrTimingOptions{
+        settings.value("vrrbufferpermille", 0).toInt(),
+        settings.value("vrrtargethundredths", 0).toInt(),
+        settings.value("vrrhistoryseconds", 0).toInt(),
+        settings.value("vrrtoleranceus", 0).toInt()
+    }.resolved(vrrLatencyMode);
     smoothVrrFrameTiming = settings.value(SER_SMOOTHVRRFRAMETIMING, true).toBool();
     traceVrrFrames = settings.value(SER_TRACEVRRFRAMES, false).toBool();
     settings.remove("vrrdiagnosticmode"); // Retired, unpublished timing comparison selector.
@@ -192,6 +199,7 @@ void StreamingPreferences::reload()
                                                   static_cast<int>(AudioConfig::AC_STEREO)).toInt());
     videoCodecConfig = static_cast<VideoCodecConfig>(settings.value(SER_VIDEOCFG,
                                                   static_cast<int>(VideoCodecConfig::VCC_AUTO)).toInt());
+    pyroWaveCompression = settings.value(SER_PYROWAVECOMPRESSION, settings.value("pyrowavehybrid", false)).toBool();
     videoDecoderSelection = static_cast<VideoDecoderSelection>(settings.value(SER_VIDEODEC,
                                                   static_cast<int>(VideoDecoderSelection::VDS_AUTO)).toInt());
     rendererSelection = static_cast<RendererSelection>(settings.value(SER_RENDERER,
@@ -366,6 +374,10 @@ void StreamingPreferences::save()
     settings.setValue(SER_VSYNC, enableVsync);
     settings.setValue(SER_ENABLEVRR, enableVrr);
     settings.setValue(SER_VRRLATENCYMODE, vrrLatencyMode);
+    settings.setValue("vrrbufferpermille", vrrBufferPerMille());
+    settings.setValue("vrrtargethundredths", vrrTargetHundredths());
+    settings.setValue("vrrhistoryseconds", vrrHistorySeconds());
+    settings.setValue("vrrtoleranceus", vrrToleranceUs());
     settings.remove("vrrlatencyoscillation");
     settings.remove("gamescopemailbox"); // Retired Mailbox A/B experiment.
     settings.remove("gamescoperepaint");
@@ -392,6 +404,8 @@ void StreamingPreferences::save()
     settings.setValue(SER_HDR, enableHdr);
     settings.setValue(SER_YUV444, enableYUV444);
     settings.setValue(SER_VIDEOCFG, static_cast<int>(videoCodecConfig));
+    settings.setValue(SER_PYROWAVECOMPRESSION, pyroWaveCompression);
+    settings.remove("pyrowavehybrid");
     settings.setValue(SER_VIDEODEC, static_cast<int>(videoDecoderSelection));
     settings.setValue(SER_RENDERER, static_cast<int>(rendererSelection));
     settings.setValue(SER_WINDOWMODE, static_cast<int>(windowMode));
@@ -548,4 +562,45 @@ int StreamingPreferences::getDefaultPyroWaveBitrate(int width, int height, int f
 {
     // Match the author recommendation shown by calibration without running it.
     return pyroWaveRecommendedKbps(width, height, fps, yuv444, hdr);
+}
+
+void StreamingPreferences::applyVrrPreset(int mode)
+{
+    if (mode < VLM_SMOOTH || mode > VLM_LOW_LATENCY) return;
+    vrrLatencyMode = mode;
+    m_VrrTimingOptions = VrrTimingOptions::preset(mode);
+    emit vrrLatencyModeChanged();
+    emit vrrTimingChanged();
+}
+
+void StreamingPreferences::setVrrBufferPerMille(int value)
+{
+    value = qBound(250, value, 4000);
+    if (value == vrrBufferPerMille()) return;
+    m_VrrTimingOptions.bufferPerMille = value;
+    emit vrrTimingChanged();
+}
+
+void StreamingPreferences::setVrrTargetHundredths(int value)
+{
+    value = qBound(9000, value, 9999);
+    if (value == vrrTargetHundredths()) return;
+    m_VrrTimingOptions.targetHundredths = value;
+    emit vrrTimingChanged();
+}
+
+void StreamingPreferences::setVrrHistorySeconds(int value)
+{
+    value = qBound(10, value, 300);
+    if (value == vrrHistorySeconds()) return;
+    m_VrrTimingOptions.historySeconds = value;
+    emit vrrTimingChanged();
+}
+
+void StreamingPreferences::setVrrToleranceUs(int value)
+{
+    value = ((qBound(250, value, 2000) + 125) / 250) * 250;
+    if (value == vrrToleranceUs()) return;
+    m_VrrTimingOptions.toleranceUs = value;
+    emit vrrTimingChanged();
 }

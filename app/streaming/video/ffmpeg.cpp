@@ -140,8 +140,7 @@ int FFmpegVideoDecoder::getDecoderCapabilities()
                     capabilities);
     }
     else if (m_PyroWaveActive) {
-        // Every PyroWave frame is intra-coded: there are no references to
-        // invalidate and the codec has no slices.
+        // PyroWave's GPU reconstruction is intra-coded and has no slices.
         capabilities = 0;
     }
     else {
@@ -634,7 +633,7 @@ bool FFmpegVideoDecoder::completeInitialization(const AVCodec* decoder, enum AVP
     m_OriginalVideoHeight = params->height;
     m_StreamFps = params->frameRate;
     m_VideoFormat = params->videoFormat;
-    m_VrrLatencyMode = params->vrrLatencyMode;
+    m_VrrUsesMaximumBuffer = params->vrrTimingOptions.resolved(params->vrrLatencyMode).bufferPerMille >= 4000;
     m_CurrentTestMode = testMode;
 
     // Don't bother initializing Pacer if we're not actually going to render
@@ -651,7 +650,7 @@ bool FFmpegVideoDecoder::completeInitialization(const AVCodec* decoder, enum AVP
                                      .arg(params->width).arg(params->height).arg(params->videoFormat)
                                      .arg(m_FrontendRenderer->getCalibrationIdentity())
                                      .arg(decoder != nullptr ? decoder->name : "pyrowave"),
-                                 params->vrrLatencyMode)) {
+                                 params->vrrLatencyMode, params->vrrTimingOptions)) {
             return false;
         }
     }
@@ -1187,7 +1186,7 @@ void FFmpegVideoDecoder::syncPacerTelemetry()
         interval.qualityPercent());
     Session::get()->getOverlayManager().setStatusMessage(Overlay::StatusSource::ClientPacing,
         ClientPacingWarning::message(warning, (m_VideoFormat & VIDEO_FORMAT_MASK_AV1) != 0,
-            Session::get()->hevcPacingAlternative(), m_VrrLatencyMode == 0));
+            Session::get()->hevcPacingAlternative(), m_VrrUsesMaximumBuffer));
     m_LastPacerTelemetry = snapshot;
 }
 
@@ -2276,6 +2275,7 @@ bool FFmpegVideoDecoder::initializePyroWave(PDECODER_PARAMETERS params)
     config.height = params->height;
     config.chroma444 = (params->videoFormat & VIDEO_FORMAT_MASK_YUV444) != 0;
     config.tenBit = (params->videoFormat & VIDEO_FORMAT_MASK_10BIT) != 0;
+    config.compression = Session::get() && Session::get()->streamPyroWaveCompression();
 #ifndef Q_OS_WIN32
     config.vulkanPool = m_BackendRenderer->getPyroWaveVulkanPool();
 #endif
@@ -2340,8 +2340,7 @@ int FFmpegVideoDecoder::sendPyroWaveFrame(int length, uint32_t rtpTimestamp)
         av_frame_free(&frame);
         m_PyroWaveRejectedFrames++;
 
-        // Every frame is independent, so there is nothing to request from the
-        // host: the next frame replaces this one. Log at most once a second.
+        // The next independent frame replaces this one. Log at most once a second.
         const uint64_t nowUs = LiGetMicroseconds();
         if (nowUs - m_PyroWaveLastErrorLogUs >= 1000000) {
             m_PyroWaveLastErrorLogUs = nowUs;
@@ -2970,8 +2969,9 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
     m_ActiveWndVideoStats.receivedVideoBytes += du->fullLength;
     m_ActiveWndVideoStats.totalFrames++;
 
-    // Every PyroWave frame decodes on its own, so a frame that has waited
-    // more than two source frame periods while a newer one is queued is
+    // Every frame decodes independently, so unopened frames can safely be
+    // skipped. A frame that has waited more than two source frame
+    // periods while a newer one is queued is
     // dropped unopened. Decoding it would cost the GPU time the queue needs to
     // drain, and it would only be shown late or discarded by the pacer. Use
     // the source's actual cadence: below the negotiated rate, one brief decode

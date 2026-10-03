@@ -56,7 +56,7 @@ win32 {
     }
 
     INCLUDEPATH += $$PWD/../libs/windows/include
-    LIBS += dcomp.lib advapi32.lib ws2_32.lib iphlpapi.lib shell32.lib winmm.lib dxva2.lib ole32.lib gdi32.lib user32.lib d3d9.lib dwmapi.lib dbghelp.lib hid.lib
+    LIBS += dcomp.lib advapi32.lib cfgmgr32.lib ws2_32.lib iphlpapi.lib shell32.lib winmm.lib dxva2.lib ole32.lib gdi32.lib user32.lib d3d9.lib dwmapi.lib dbghelp.lib hid.lib
 }
 macx:!disable-prebuilts {
     !exists($$PWD/../libs/mac) {
@@ -246,6 +246,7 @@ HEADERS += \
     cli/quitstream.h \
     cli/startstream.h \
     settings/streamingpreferences.h \
+    settings/vrrtimingoptions.h \
     diagnostics/diagnosticcapture.h \
     diagnostics/gputrace.h \
     diagnostics/diagnosticzip.h \
@@ -538,6 +539,7 @@ linux:contains(QT_ARCH, x86_64):!disable-pyrowave:contains(CONFIG, libplacebo) {
     CONFIG += pyrowave
 }
 pyrowave {
+    include($$PWD/../pyrowave/compression/compression.pri)
     DEFINES += HAVE_PYROWAVE
 
     SOURCES += \

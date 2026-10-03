@@ -289,7 +289,8 @@ bool Session::chooseDecoder(StreamingPreferences::VideoDecoderSelection vds,
                             bool testOnly, IVideoDecoder*& chosenDecoder,
                             bool enableVrr, bool preferVrrRenderer, int vrrDisplayRefreshHz,
                             [[maybe_unused]] bool* effectiveVrr, bool smoothVrrFrameTiming,
-                            bool gamescopeMailbox, int vrrLatencyMode, bool gamescopeRepaint)
+                            bool gamescopeMailbox, int vrrLatencyMode, bool gamescopeRepaint,
+                            VrrTimingOptions vrrTimingOptions)
 {
     DECODER_PARAMETERS params = {};
 
@@ -311,6 +312,7 @@ bool Session::chooseDecoder(StreamingPreferences::VideoDecoderSelection vds,
     // it can match that renderer/color policy without starting VRR presentation.
     params.preferVrrRenderer = preferVrrRenderer || enableVrr;
     params.vrrLatencyMode = vrrLatencyMode;
+    params.vrrTimingOptions = vrrTimingOptions;
     params.gamescopeMailbox = gamescopeMailbox;
     params.gamescopeRepaint = gamescopeRepaint;
     params.smoothVrrFrameTiming = smoothVrrFrameTiming;
@@ -691,6 +693,7 @@ void Session::snapshotPresentationSettings(SDL_Window* window)
                                                m_Preferences->framePacing;
     m_PresentationSettings.enableVrr = false;
     m_PresentationSettings.vrrLatencyMode = m_Preferences->vrrLatencyMode;
+    m_PresentationSettings.vrrTimingOptions = m_Preferences->vrrTimingOptions();
     m_PresentationSettings.gamescopeRepaint = false; // Retired repaint experiment.
     m_PresentationSettings.gamescopeMailbox = false; // Retired Mailbox experiment.
     m_PresentationSettings.smoothVrrFrameTiming = m_Preferences->smoothVrrFrameTiming;
@@ -1183,6 +1186,14 @@ bool Session::validateLaunch(SDL_Window* testWindow)
             m_SupportedVideoFormats.removeByMask(VIDEO_FORMAT_MASK_PYROWAVE);
         }
         else {
+            if (m_Preferences->pyroWaveCompression) {
+                if (m_Computer->pyrowaveCompressionVersion == PYROWAVE_COMPRESSION_VERSION) {
+                    m_StreamConfig.pyrowaveCompression = 1;
+                }
+                else {
+                    emitLaunchWarning(tr("Your host PC doesn't support this version of PyroWave compression. Using normal PyroWave instead."));
+                }
+            }
             const int hostLinkMbps = int(m_Computer->pyrowaveHostLinkMbps);
             if (hostLinkMbps > 0 && m_StreamConfig.bitrate > hostLinkMbps * 800) {
                 emitLaunchWarning(tr("PyroWave is set to %1 Mbps, but the host's %2 Mbps wired link leaves room for only about %3 Mbps of video. Lower the bitrate or run calibration.")
@@ -2046,6 +2057,10 @@ void Session::start()
             {"vrr_qualified", m_PresentationSettings.enableVrr},
             {"display_refresh_hz", m_PresentationSettings.refreshRate},
             {"latency_mode", m_PresentationSettings.vrrLatencyMode},
+            {"vrr_buffer_per_mille", m_PresentationSettings.vrrTimingOptions.bufferPerMille},
+            {"vrr_target_hundredths", m_PresentationSettings.vrrTimingOptions.targetHundredths},
+            {"vrr_history_seconds", m_PresentationSettings.vrrTimingOptions.historySeconds},
+            {"vrr_tolerance_us", m_PresentationSettings.vrrTimingOptions.toleranceUs},
             {"reduce_judder", m_PresentationSettings.smoothVrrFrameTiming}
         };
         QString error;
@@ -2617,7 +2632,8 @@ void Session::exec()
                                m_PresentationSettings.smoothVrrFrameTiming,
                                m_PresentationSettings.gamescopeMailbox,
                                m_PresentationSettings.vrrLatencyMode,
-                               m_PresentationSettings.gamescopeRepaint)) {
+                               m_PresentationSettings.gamescopeRepaint,
+                               m_PresentationSettings.vrrTimingOptions)) {
                 SDL_UnlockMutex(m_DecoderLock);
                 SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                              "Failed to recreate decoder after reset");

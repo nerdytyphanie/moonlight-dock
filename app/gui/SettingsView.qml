@@ -733,7 +733,23 @@ Flickable {
                     ToolTip.delay: 1000
                     ToolTip.timeout: 8000
                     ToolTip.visible: hovered && slider.pyroWave
-                    ToolTip.text: qsTr("PyroWave is an intra-only GPU wavelet codec. It needs a wired connection with hundreds of Mbps to spare and a host with PyroWave support; other hosts fall back to H.264. On Linux, GPU readback and upload may limit frame rate.")
+                    ToolTip.text: qsTr("PyroWave is a GPU wavelet codec. It needs a wired connection with hundreds of Mbps to spare and a host with PyroWave support; other hosts fall back to H.264. Fast lossless compression can reduce PyroWave bandwidth. On Linux, GPU readback and upload may limit frame rate.")
+                }
+
+                CheckBox {
+                    id: pyroWaveCompression
+                    width: parent.width
+                    visible: SystemProperties.hasPyroWave && slider.pyroWave
+                    text: qsTr("PyroWave compression")
+                    font.pointSize: 12
+
+                    checked: StreamingPreferences.pyroWaveCompression
+                    onCheckedChanged: StreamingPreferences.pyroWaveCompression = checked
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 8000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Apply fast lossless compression to independent detail groups. This can lower bandwidth without adding a frame of buffering; savings depend on the scene. Missing detail can still render as blur. Requires a host with PyroWave compression support; other hosts use normal PyroWave. Reconnect after changing this setting.")
                 }
 
                 CheckBox {
@@ -898,8 +914,9 @@ Flickable {
                     spacing: 5
                     visible: SystemProperties.hasPyroWave && slider.pyroWave
 
-                    ComboBox {
+                    AutoResizingComboBox {
                         id: calibrationHost
+                        objectName: "pyrowaveCalibrationHost"
                         width: parent.width
                         model: calibrationHosts
                         textRole: "name"
@@ -1370,79 +1387,19 @@ Flickable {
                     }
                 }
 
-                Column {
+                VrrTimingSettings {
                     width: parent.width
-                    spacing: 5
                     visible: StreamingPreferences.enableVrr
                     enabled: StreamingPreferences.enableVsync && StreamingPreferences.enableVrr
-
-                    Label {
-                        width: parent.width
-                        text: qsTr("VRR timing")
-                        font.pointSize: 12
-                        wrapMode: Text.Wrap
-                    }
-
-                    AutoResizingComboBox {
-                        id: vrrLatencyModeComboBox
-                        textRole: "text"
-                        model: ListModel {
-                            id: vrrLatencyModeListModel
-                            ListElement {
-                                text: qsTr("Low Latency")
-                                val: StreamingPreferences.VLM_LOW_LATENCY
-                            }
-                            ListElement {
-                                text: qsTr("Balanced Target")
-                                val: StreamingPreferences.VLM_BALANCED_TARGET
-                            }
-                            ListElement {
-                                text: qsTr("Smooth")
-                                val: StreamingPreferences.VLM_SMOOTH
-                            }
-                        }
-                        currentIndex: {
-                            for (var i = 0; i < vrrLatencyModeListModel.count; i++) {
-                                if (vrrLatencyModeListModel.get(i).val === StreamingPreferences.vrrLatencyMode) {
-                                    return i
-                                }
-                            }
-                            return 1
-                        }
-                        onActivated: {
-                            StreamingPreferences.vrrLatencyMode = vrrLatencyModeListModel.get(currentIndex).val
-                        }
-                        Component.onCompleted: {
-                            recalculateWidth()
-                            languageChanged.connect(recalculateWidth)
-                        }
-                    }
-
-                    Label {
-                        width: parent.width
-                        wrapMode: Text.Wrap
-                        text: StreamingPreferences.vrrLatencyMode === StreamingPreferences.VLM_LOW_LATENCY ?
-                                  qsTr("Minimizes added delay. Uneven delivery can cause more stutter or skipped frames.") :
-                              StreamingPreferences.vrrLatencyMode === StreamingPreferences.VLM_SMOOTH ?
-                                  qsTr("Uses more padding and holds it longer for steadier motion, with more input delay.") :
-                                  qsTr("Targets steadier motion with a moderate timing reserve and balanced input delay.")
-                    }
-
-                    Label {
-                        width: parent.width
-                        wrapMode: Text.Wrap
-                        text: StreamingPreferences.vrrLatencyMode === StreamingPreferences.VLM_SMOOTH ?
-                                  qsTr("Buffer allowance: up to 4 source frames, limited by queue capacity. Actual learned delay may be lower.") :
-                              StreamingPreferences.vrrLatencyMode === StreamingPreferences.VLM_LOW_LATENCY ?
-                                  qsTr("Buffer allowance: up to 1 source frame, limited by queue capacity. Actual learned delay may be lower.") :
-                                  qsTr("Buffer allowance: up to 2 source frames, limited by queue capacity. Actual learned delay may be lower.")
-                    }
-
-                    Label {
-                        width: parent.width
-                        wrapMode: Text.Wrap
-                        text: qsTr("Applies at all VRR frame rates. Reconnect the stream after changing this setting.")
-                    }
+                    bufferPerMille: StreamingPreferences.vrrBufferPerMille
+                    targetHundredths: StreamingPreferences.vrrTargetHundredths
+                    historySeconds: StreamingPreferences.vrrHistorySeconds
+                    toleranceUs: StreamingPreferences.vrrToleranceUs
+                    onPresetPicked: function(mode) { StreamingPreferences.applyVrrPreset(mode) }
+                    onBufferEdited: function(value) { StreamingPreferences.vrrBufferPerMille = value }
+                    onTargetEdited: function(value) { StreamingPreferences.vrrTargetHundredths = value }
+                    onHistoryEdited: function(value) { StreamingPreferences.vrrHistorySeconds = value }
+                    onToleranceEdited: function(value) { StreamingPreferences.vrrToleranceUs = value }
                 }
 
                 CheckBox {

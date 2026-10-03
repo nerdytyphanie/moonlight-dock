@@ -4,6 +4,7 @@
 #include <QRect>
 #include <QQmlEngine>
 #include <QVariantList>
+#include "vrrtimingoptions.h"
 
 class StreamingPreferences : public QObject
 {
@@ -23,6 +24,16 @@ public:
     Q_INVOKABLE void save();
 
     void reload();
+    Q_INVOKABLE void applyVrrPreset(int mode);
+    int vrrBufferPerMille() const { return m_VrrTimingOptions.bufferPerMille; }
+    int vrrTargetHundredths() const { return m_VrrTimingOptions.targetHundredths; }
+    int vrrHistorySeconds() const { return m_VrrTimingOptions.historySeconds; }
+    void setVrrBufferPerMille(int value);
+    void setVrrTargetHundredths(int value);
+    void setVrrHistorySeconds(int value);
+    int vrrToleranceUs() const { return m_VrrTimingOptions.toleranceUs; }
+    void setVrrToleranceUs(int value);
+    VrrTimingOptions vrrTimingOptions() const { return m_VrrTimingOptions; }
 
     enum AudioConfig
     {
@@ -150,6 +161,10 @@ public:
     Q_PROPERTY(bool enableVsync MEMBER enableVsync NOTIFY enableVsyncChanged)
     Q_PROPERTY(bool enableVrr MEMBER enableVrr NOTIFY enableVrrChanged)
     Q_PROPERTY(int vrrLatencyMode MEMBER vrrLatencyMode NOTIFY vrrLatencyModeChanged)
+    Q_PROPERTY(int vrrBufferPerMille READ vrrBufferPerMille WRITE setVrrBufferPerMille NOTIFY vrrTimingChanged)
+    Q_PROPERTY(int vrrTargetHundredths READ vrrTargetHundredths WRITE setVrrTargetHundredths NOTIFY vrrTimingChanged)
+    Q_PROPERTY(int vrrHistorySeconds READ vrrHistorySeconds WRITE setVrrHistorySeconds NOTIFY vrrTimingChanged)
+    Q_PROPERTY(int vrrToleranceUs READ vrrToleranceUs WRITE setVrrToleranceUs NOTIFY vrrTimingChanged)
     Q_PROPERTY(bool smoothVrrFrameTiming MEMBER smoothVrrFrameTiming NOTIFY smoothVrrFrameTimingChanged)
     Q_PROPERTY(bool traceVrrFrames MEMBER traceVrrFrames NOTIFY traceVrrFramesChanged)
     Q_PROPERTY(bool exportingDiagnostics MEMBER m_ExportingDiagnostics NOTIFY diagnosticsChanged)
@@ -170,6 +185,7 @@ public:
     Q_PROPERTY(bool showPerformanceOverlay MEMBER showPerformanceOverlay NOTIFY showPerformanceOverlayChanged)
     Q_PROPERTY(AudioConfig audioConfig MEMBER audioConfig NOTIFY audioConfigChanged)
     Q_PROPERTY(VideoCodecConfig videoCodecConfig MEMBER videoCodecConfig NOTIFY videoCodecConfigChanged)
+    Q_PROPERTY(bool pyroWaveCompression MEMBER pyroWaveCompression NOTIFY pyroWaveCompressionChanged)
     Q_PROPERTY(bool enableHdr MEMBER enableHdr NOTIFY enableHdrChanged)
     Q_PROPERTY(bool enableYUV444 MEMBER enableYUV444 NOTIFY enableYUV444Changed)
     Q_PROPERTY(VideoDecoderSelection videoDecoderSelection MEMBER videoDecoderSelection NOTIFY videoDecoderSelectionChanged)
@@ -233,6 +249,7 @@ public:
     int packetSize;
     AudioConfig audioConfig;
     VideoCodecConfig videoCodecConfig;
+    bool pyroWaveCompression;
     bool enableHdr;
     bool enableYUV444;
     VideoDecoderSelection videoDecoderSelection;
@@ -243,6 +260,9 @@ public:
     CaptureSysKeysMode captureSysKeysMode;
     RendererSelection rendererSelection;
 
+private:
+    VrrTimingOptions m_VrrTimingOptions = VrrTimingOptions::preset(1);
+
 signals:
     void displayModeChanged();
     void bitrateChanged();
@@ -251,6 +271,7 @@ signals:
     void enableVsyncChanged();
     void enableVrrChanged();
     void vrrLatencyModeChanged();
+    void vrrTimingChanged();
     void smoothVrrFrameTimingChanged();
     void traceVrrFramesChanged();
     void diagnosticsChanged();
@@ -264,6 +285,7 @@ signals:
     void absoluteTouchModeChanged();
     void audioConfigChanged();
     void videoCodecConfigChanged();
+    void pyroWaveCompressionChanged();
     void enableHdrChanged();
     void enableYUV444Changed();
     void videoDecoderSelectionChanged();

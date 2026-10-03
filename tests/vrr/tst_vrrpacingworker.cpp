@@ -728,6 +728,17 @@ void testLatencyFixDropBoundaries()
            "active latency fix may shed material floor debt below exact refresh");
     expect(!VrrFrameDropPolicy::beforeRender(decision, 8333, 0, false, false),
            "ordinary below-refresh playback must keep its natural debt recovery");
+    for (bool latencyFix : {false, true}) {
+        expect(!VrrFrameDropPolicy::beforeRender(decision, 8333, 18000,
+                   false, latencyFix, 4500, true),
+               "late rescue must retain a display-floor-delayed frame within the queue-age bound");
+        expect(VrrFrameDropPolicy::beforeRender(decision, 8333, 18001,
+                   false, latencyFix, 4500, true),
+               "late rescue must still shed actual backlog beyond two source periods");
+    }
+    expect(!VrrFrameDropPolicy::beforeRender(decision, 10000, 9000,
+               false, true, 4500, true),
+           "near-refresh rescue must not mistake display spacing alone for stale work");
 
     decision.sourcePeriodUs = std::numeric_limits<uint64_t>::max();
     expect(VrrFrameDropPolicy::maximumAgeUs(decision, false, false) ==
@@ -2286,6 +2297,8 @@ void testDeepTraceRequestsNativeObservationsWithoutChangingMode()
     TrackedFrameLifetime first;
 
     auto cachedConfig = enabledConfig();
+    // Exercise a combination that cannot be reconstructed from a preset name.
+    cachedConfig.timingOptions = {750, 9725, 30, 1500};
     cachedConfig.calibrationPath = traceDirectory.filePath("profile.json").toStdString();
     cachedConfig.calibrationKey = "replay-test";
     Vrr13::Reserve cachedHistory(20);
@@ -2327,6 +2340,11 @@ void testDeepTraceRequestsNativeObservationsWithoutChangingMode()
                fields.value(columns.indexOf("history_version")) == "20" &&
                fields.value(columns.indexOf("history_state_valid")) == "1",
            "capture must identify the active preset and loaded calibration independently of native present results");
+    expect(fields.value(columns.indexOf("param_playout_delay_maximum_period_per_mille")) == "750" &&
+           fields.value(columns.indexOf("param_playout_on_time_target_per_million")) == "972500" &&
+           fields.value(columns.indexOf("param_playout_readiness_window_us")) == "30000000" &&
+           fields.value(columns.indexOf("param_playout_interval_tolerance_us")) == "1500",
+           "capture must record the actual custom settings rather than the preset defaults");
     expect(columns.contains("presentation_uncertainty_us") &&
            fields.value(columns.indexOf("presentation_uncertainty_us")) == "0",
            "trace must preserve non-DXGI clock uncertainty, defaulting to zero for legacy presenters");
@@ -2338,7 +2356,7 @@ void testDeepTraceRequestsNativeObservationsWithoutChangingMode()
     expect(restored.loadProfile(profile) && restored.common() == 4000000 && restored.evidence() == 0,
            "captured calibration must restore prior history without inventing fresh successes");
     expect(fields.value(columns.indexOf("param_playout_prediction_only")) == "1" &&
-               fields.value(columns.indexOf("param_playout_responsive_buffer")) == "7" &&
+               fields.value(columns.indexOf("param_playout_responsive_buffer")) == "9" &&
                fields.value(columns.indexOf("param_playout_smoothing_windowed_cadence")) == "2" &&
                fields.value(columns.indexOf("param_playout_native_hitch_adaptation")) == "0",
            "capture must identify production interval-quality adaptation for exact replay");
