@@ -387,6 +387,7 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     parser.addToggleOption("swap-gamepad-buttons", "swap A/B and X/Y gamepad buttons (Nintendo-style)");
     parser.addToggleOption("keep-awake", "prevent display sleep while streaming");
     parser.addToggleOption("performance-overlay", "show performance overlay");
+    parser.addToggleOption("connection-warnings", "connection quality warnings");
     parser.addToggleOption("hdr", "HDR streaming");
     parser.addToggleOption("yuv444", "YUV 4:4:4 sampling, if supported");
     parser.addChoiceOption("capture-system-keys", "capture system key combos", m_CaptureSysKeysModeMap.keys());
@@ -512,6 +513,9 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
 
     // Resolve --performance-overlay and --no-performance-overlay options
     preferences->showPerformanceOverlay = parser.getToggleOptionValue("performance-overlay", preferences->showPerformanceOverlay);
+
+    // Resolve --connection-warnings and --no-connection-warnings options
+    preferences->connectionWarnings = parser.getToggleOptionValue("connection-warnings", preferences->connectionWarnings);
 
     // Command-line streams require an explicit --hdr, regardless of saved GUI preferences.
     preferences->enableHdr = parser.getToggleOptionValue("hdr", false);

@@ -45,6 +45,14 @@ Invalid parent handles fail without a message box. Connection errors are logged 
 
 Dock mode is Windows-only and uses a native parent window in the interactive desktop. HDR, input focus, DPI changes, and graphics-driver compatibility require testing in the embedding host.
 
+## Connection quality warnings
+
+For `stream` launches (including Dock mode), use `--connection-warnings` or `--no-connection-warnings` to enable or disable the red network-quality and VRR client-pacing warnings for that launch. Like `--performance-overlay` / `--no-performance-overlay`, omitting the option keeps the saved preference, and the last option wins if both forms are supplied. The override does not save the preference or change buffering, pacing, or bitrate.
+
+```text
+Moonlight.exe stream --no-connection-warnings HOST "Desktop"
+```
+
 ## Build and test the fork
 
 Install Visual Studio 2022 C++ tools, Qt MSVC x64, and 7-Zip. Initialize all submodules, then run:
