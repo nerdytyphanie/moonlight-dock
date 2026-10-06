@@ -73,6 +73,7 @@ a line says so.
 |---|---|---|---|---|
 | `enablevrr` | bool | false | false | CLI `--no-vrr` also turns it off |
 | `vrrlatencymode` | DWORD | 1 | 1 | 0 Smooth, 1 Balanced, 2 Low latency. Falls back to the retired `vrrlatencyfix` checkbox |
+| ↳ CLI override | | | | `stream --vrr-timing-preset <smooth\|balanced\|low-latency>` replaces the mode and all four timing values for this launch only; omitted preserves saved overrides; does not enable VRR |
 | `vrrbufferpermille` | DWORD | from the mode | 0x3e8 (1000) | Buffer allowance; the mode preset fills any zero value |
 | `vrrtargethundredths` | DWORD | from the mode | 0x26de (9950) | Interval quality target, in hundredths of a percent |
 | `vrrhistoryseconds` | DWORD | from the mode | 0x78 (120) | History window |

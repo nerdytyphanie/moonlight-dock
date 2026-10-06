@@ -363,6 +363,8 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     parser.addValueOption("resolution", "custom <width>x<height> resolution");
     parser.addToggleOption("vsync", "V-Sync");
     parser.addToggleOption("vrr", "VRR");
+    parser.addChoiceOption("vrr-timing-preset", "VRR timing preset (launch-only; does not enable VRR)",
+                           {"smooth", "balanced", "low-latency"});
     parser.addToggleOption("vrr-smooth-frame-timing", "VRR frame timing smoothing");
     parser.addValueOption("fps", "FPS");
     parser.addValueOption("bitrate", "bitrate in Kbps");
@@ -464,6 +466,15 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     // command-line settings.  It must not persist a CLI choice back to the
     // normal settings UI.
     preferences->enableVrr = parser.getToggleOptionValue("vrr", preferences->enableVrr);
+    if (parser.isSet("vrr-timing-preset")) {
+        const QMap<QString, int> presets = {
+            {"smooth", StreamingPreferences::VLM_SMOOTH},
+            {"balanced", StreamingPreferences::VLM_BALANCED},
+            {"low-latency", StreamingPreferences::VLM_LOW_LATENCY}
+        };
+        // Replace saved per-value overrides too; changing only the mode leaves them active.
+        preferences->applyVrrPreset(mapValue(presets, parser.getChoiceOptionValue("vrr-timing-preset")));
+    }
     preferences->smoothVrrFrameTiming = parser.getToggleOptionValue(
         "vrr-smooth-frame-timing", preferences->smoothVrrFrameTiming);
 

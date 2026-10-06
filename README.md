@@ -53,6 +53,20 @@ For `stream` launches (including Dock mode), use `--connection-warnings` or `--n
 Moonlight.exe stream --no-connection-warnings HOST "Desktop"
 ```
 
+## VRR timing preset
+
+For `stream` launches (including Dock mode), `--vrr-timing-preset <smooth|balanced|low-latency>` selects the mode and replaces all four saved timing overrides for that launch only. Omitting it preserves the saved mode and custom values. It does not save settings or enable VRR: use the existing `--vrr` / `--no-vrr` options to control VRR independently.
+
+| Preset | Buffer (source-frame permille) | Quality target (hundredths of a percent) | History (seconds) | Tolerance (microseconds) |
+|---|---:|---:|---:|---:|
+| `smooth` | 4000 | 9999 | 300 | 250 |
+| `balanced` | 1000 | 9950 | 120 | 500 |
+| `low-latency` | 500 | 9900 | 60 | 500 |
+
+```text
+Moonlight.exe stream --vrr --vrr-timing-preset smooth HOST "Desktop"
+```
+
 ## Build and test the fork
 
 Install Visual Studio 2022 C++ tools, Qt MSVC x64, and 7-Zip. Initialize all submodules, then run:

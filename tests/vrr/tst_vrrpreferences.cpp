@@ -62,6 +62,74 @@ private slots:
         QCOMPARE(prefs->vrrHistorySeconds(), 60);
         QCOMPARE(prefs->vrrToleranceUs(), 500);
     }
+    void launchPresetOverridesSavedTiming_data()
+    {
+        QTest::addColumn<int>("mode");
+        QTest::addColumn<bool>("custom");
+        QTest::addColumn<bool>("vrrEnabled");
+        for (int mode : {0, 1, 2}) {
+            for (bool custom : {false, true}) {
+                for (bool enabled : {false, true}) {
+                    const auto name = QString("mode%1-custom%2-vrr%3").arg(mode).arg(custom).arg(enabled).toLatin1();
+                    QTest::newRow(name.constData()) << mode << custom << enabled;
+                }
+            }
+        }
+    }
+    void launchPresetOverridesSavedTiming()
+    {
+        QFETCH(int, mode);
+        QFETCH(bool, custom);
+        QFETCH(bool, vrrEnabled);
+        auto* prefs = StreamingPreferences::get();
+        prefs->reload();
+        prefs->applyVrrPreset(StreamingPreferences::VLM_BALANCED);
+        prefs->enableVrr = vrrEnabled;
+        if (custom) {
+            prefs->setVrrBufferPerMille(750);
+            prefs->setVrrTargetHundredths(9725);
+            prefs->setVrrHistorySeconds(30);
+            prefs->setVrrToleranceUs(1500);
+        }
+        prefs->save();
+        const auto savedOptions = prefs->vrrTimingOptions();
+        QSettings saved;
+        QMap<QString, QVariant> before;
+        for (const auto& key : saved.allKeys()) before.insert(key, saved.value(key));
+        prefs->reload();
+        QSignalSpy modeChanged(prefs, &StreamingPreferences::vrrLatencyModeChanged);
+        QSignalSpy timingChanged(prefs, &StreamingPreferences::vrrTimingChanged);
+
+        // The CLI calls this helper only when --vrr-timing-preset is supplied.
+        prefs->applyVrrPreset(mode);
+        const auto expected = VrrTimingOptions::preset(mode);
+        const auto effective = prefs->vrrTimingOptions();
+        QCOMPARE(prefs->vrrLatencyMode, mode);
+        QCOMPARE(effective.bufferPerMille, expected.bufferPerMille);
+        QCOMPARE(effective.targetHundredths, expected.targetHundredths);
+        QCOMPARE(effective.historySeconds, expected.historySeconds);
+        QCOMPARE(effective.toleranceUs, expected.toleranceUs);
+        QCOMPARE(prefs->property("vrrLatencyMode").toInt(), mode);
+        QCOMPARE(prefs->property("vrrBufferPerMille").toInt(), expected.bufferPerMille);
+        QCOMPARE(prefs->property("vrrTargetHundredths").toInt(), expected.targetHundredths);
+        QCOMPARE(prefs->property("vrrHistorySeconds").toInt(), expected.historySeconds);
+        QCOMPARE(prefs->property("vrrToleranceUs").toInt(), expected.toleranceUs);
+        QCOMPARE(modeChanged.count(), 1);
+        QCOMPARE(timingChanged.count(), 1);
+        QCOMPARE(prefs->enableVrr, vrrEnabled);
+        saved.sync();
+        QCOMPARE(saved.allKeys(), before.keys());
+        for (auto it = before.cbegin(); it != before.cend(); ++it) QCOMPARE(saved.value(it.key()), it.value());
+
+        // A later launch without the flag still loads the saved mode and overrides.
+        prefs->reload();
+        QCOMPARE(prefs->vrrLatencyMode, int(StreamingPreferences::VLM_BALANCED));
+        QCOMPARE(prefs->vrrBufferPerMille(), savedOptions.bufferPerMille);
+        QCOMPARE(prefs->vrrTargetHundredths(), savedOptions.targetHundredths);
+        QCOMPARE(prefs->vrrHistorySeconds(), savedOptions.historySeconds);
+        QCOMPARE(prefs->vrrToleranceUs(), savedOptions.toleranceUs);
+        QCOMPARE(prefs->enableVrr, vrrEnabled);
+    }
     void invalidSavedValues()
     {
         QSettings saved;
